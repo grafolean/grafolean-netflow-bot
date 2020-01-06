@@ -1,0 +1,3 @@
+[submodule "python-netflow-v9-softflowd"]
+	path = python-netflow-v9-softflowd
+	url = https://github.com/bitkeks/python-netflow-v9-softflowd.git
