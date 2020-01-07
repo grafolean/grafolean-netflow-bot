@@ -10,6 +10,8 @@ pylint = "*"
 requests = "*"
 python-dotenv = "*"
 ansicolors = "*"
+grafoleancollector = "*"
+redis = "*"
 
 [requires]
 python_version = "3.6"

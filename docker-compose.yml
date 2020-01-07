@@ -1,0 +1,77 @@
+version: '2.1'
+services:
+
+  #
+  # Welcome to Grafolean NetFlow bot!
+  #
+  # This file should be modified to suit your running environment. Please check the comments and change
+  # the settings appropriately.
+  #
+
+  netflowbot:
+    # If you wish to load an explicit version, change the next line. For example:
+    #   image: grafolean/grafolean-netflow-bot:v1.0.0
+    image: grafolean/grafolean-netflow-bot
+    container_name: grafolean-netflow-bot
+    environment:
+      # Backend url must be set to the address of the Grafolean backend, for example this uses Grafolean hosted service:
+      # - BACKEND_URL=https://grafolean.com/api
+      # IMPORTANT: '127.0.0.1' and 'localhost' are _never_ correct addresses for Grafolean backend, because they translate
+      # to container, not host.
+      - BACKEND_URL=${BACKEND_URL}
+      # To use NetFlow bot, a bot with the protocol "netflow" must be added via user interface, then the token needs to be copied here:
+      - BOT_TOKEN=${BOT_TOKEN}
+      # Interval between fetching information about jobs:
+      - JOBS_REFRESH_INTERVAL=${JOBS_REFRESH_INTERVAL:-60}
+      - REDIS_HOST=redis
+    restart: always
+    networks:
+      - grafolean
+
+
+  redis:
+    image: redis:5-alpine
+    container_name: grafolean-netflow-bot-redis
+    restart: always
+    networks:
+      - grafolean
+
+
+  netflowcollector:
+    # This process collects NetFlow data:
+    image: grafolean/grafolean-netflow-bot
+    container_name: grafolean-netflow-collector
+    environment:
+      - REDIS_HOST=redis
+      - NETFLOW_PORT=2055
+    ports:
+      - "${NETFLOW_PORT:-2055}:2055/udp"
+    restart: always
+    # CAREFUL: NetFlow collector uses the same docker image as bot
+    # (grafolean/grafolean-netflow-bot), but specifies a different entrypoint:
+    entrypoint:
+      - python
+      - -m
+      - netflowcollector
+    networks:
+      - grafolean
+
+
+  autoheal:
+    # This container automatically restarts any container that fails its health check. Not a bullet-proof solution, but better than nothing.
+    image: willfarrell/autoheal
+    container_name: grafolean-netflow-bot-autoheal
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
+    networks:
+      - grafolean
+
+
+# If running on the same host, join the Grafolean network, so we can reach Grafolean
+# backend at address grafolean:80.
+networks:
+  grafolean:
+    name: grafolean

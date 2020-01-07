@@ -5,14 +5,13 @@ import logging
 import os
 import sys
 import time
-
+from collections import defaultdict
 
 from colors import color
 import dotenv
+import redis
 
-
-sys.path.append(os.path.dirname(os.path.realpath(__file__)) + '/pynetflow')
-from pynetflow.main import get_export_packets
+from grafoleancollector import Collector
 
 
 logging.basicConfig(format='%(asctime)s | %(levelname)s | %(message)s',
@@ -22,6 +21,14 @@ logging.addLevelName(logging.INFO, "INF")
 logging.addLevelName(logging.WARNING, color('WRN', fg='red'))
 logging.addLevelName(logging.ERROR, color('ERR', bg='red'))
 log = logging.getLogger("{}.{}".format(__name__, "base"))
+
+
+REDIS_HOST = os.environ.get('REDIS_HOST', '127.0.0.1')
+r = redis.Redis(host=REDIS_HOST)
+
+
+class NetFlowBot(Collector):
+    pass
 
 
 def wait_for_grafolean(backend_url):
@@ -44,29 +51,23 @@ def wait_for_grafolean(backend_url):
 if __name__ == "__main__":
     dotenv.load_dotenv()
 
-    # backend_url = os.environ.get('BACKEND_URL')
-    # jobs_refresh_interval = int(os.environ.get('JOBS_REFRESH_INTERVAL', 120))
+    backend_url = os.environ.get('BACKEND_URL')
+    jobs_refresh_interval = int(os.environ.get('JOBS_REFRESH_INTERVAL', 120))
 
-    # if not backend_url:
-    #     raise Exception("Please specify BACKEND_URL and BOT_TOKEN / BOT_TOKEN_FROM_FILE env vars.")
+    if not backend_url:
+        raise Exception("Please specify BACKEND_URL env var.")
 
-    # wait_for_grafolean(backend_url)
+    wait_for_grafolean(backend_url)
 
-    # bot_token = os.environ.get('BOT_TOKEN')
-    # if not bot_token:
-    #     # bot token can also be specified via contents of a file:
-    #     bot_token_from_file = os.environ.get('BOT_TOKEN_FROM_FILE')
-    #     if bot_token_from_file:
-    #         with open(bot_token_from_file, 'rt') as f:
-    #             bot_token = f.read()
+    bot_token = os.environ.get('BOT_TOKEN')
+    if not bot_token:
+        # bot token can also be specified via contents of a file:
+        bot_token_from_file = os.environ.get('BOT_TOKEN_FROM_FILE')
+        if bot_token_from_file:
+            with open(bot_token_from_file, 'rt') as f:
+                bot_token = f.read()
+    if not bot_token:
+        raise Exception("Please specify BOT_TOKEN / BOT_TOKEN_FROM_FILE env var.")
 
-    # if not bot_token:
-    #     raise Exception("Please specify BOT_TOKEN / BOT_TOKEN_FROM_FILE env var.")
-
-    port = int(os.environ.get('PORT', 2055))
-    try:
-        for ts, client, export in get_export_packets('0.0.0.0', port):
-            print(len(export.flows))
-    except KeyboardInterrupt:
-        log.info("KeyboardInterrupt -> exit")
-        pass
+    b = NetFlowBot(backend_url, bot_token, jobs_refresh_interval)
+    b.execute()
