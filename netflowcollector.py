@@ -16,7 +16,7 @@ import redis
 sys.path.append(os.path.dirname(os.path.realpath(__file__)) + '/pynetflow')
 from pynetflow.main import get_export_packets
 
-from lookup import PROTOCOLS
+from lookup import PROTOCOLS, REDIS_HASH_TRAFFIC_PER_PROTOCOL
 
 
 logging.basicConfig(format='%(asctime)s | %(levelname)s | %(message)s',
@@ -32,6 +32,9 @@ REDIS_HOST = os.environ.get('REDIS_HOST', '127.0.0.1')
 r = redis.Redis(host=REDIS_HOST)
 
 
+REDIS_PREFIX = 'netflow'
+
+
 def process_netflow(netflow_port):
     for ts, client, export in get_export_packets('0.0.0.0', NETFLOW_PORT):
         data = defaultdict(int)
@@ -40,10 +43,10 @@ def process_netflow(netflow_port):
             in_bytes = flow.data['IN_BYTES']
 
             protocol_str = PROTOCOLS.get(protocol, f'?{protocol}')
-            data[f'protocol_{protocol_str}_traffic'] += in_bytes
+            data[protocol_str] += in_bytes
 
         for k, v in data.items():
-            r.incrby(k, v)
+            r.hincrby(f'{REDIS_PREFIX}_{REDIS_HASH_TRAFFIC_PER_PROTOCOL}', k, v)
 
 
 if __name__ == "__main__":
