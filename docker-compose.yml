@@ -29,6 +29,30 @@ services:
       - grafolean
 
 
+  db:
+    image: postgres:9.6-alpine
+    container_name: grafolean-netflow-db
+    volumes:
+      # You should always save DB data to a host directory unless you are prepared to lose it. By default
+      # this the location of data is '/grafolean/db/'.
+      # Note that if you ever wish to copy this directory as backup, you need to stop grafolean
+      # container first. For alternative backup approaches consult PostgreSQL documentation.
+      - ${DB_DIR:-/grafolean/netflow-db/}:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_DB=${DB_NAME:-grafolean}
+      - POSTGRES_USER=${DB_USER:-admin}
+      - POSTGRES_PASSWORD=${DB_PASS:-admin}
+
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h db -t 1 -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - grafolean
+
+
   redis:
     image: redis:5-alpine
     container_name: grafolean-netflow-bot-redis
@@ -44,6 +68,10 @@ services:
     environment:
       - REDIS_HOST=redis
       - NETFLOW_PORT=2055
+      - DB_HOST=db
+      - DB_DATABASE=${DB_NAME:-grafolean}
+      - DB_USERNAME=${DB_USER:-admin}
+      - DB_PASSWORD=${DB_PASS:-admin}
     ports:
       - "${NETFLOW_PORT:-2055}:2055/udp"
     restart: always
@@ -74,4 +102,4 @@ services:
 # backend at address grafolean:80.
 networks:
   grafolean:
-    name: grafolean
+#    name: grafolean

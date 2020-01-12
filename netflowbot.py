@@ -29,7 +29,7 @@ REDIS_HOST = os.environ.get('REDIS_HOST', '127.0.0.1')
 r = redis.Redis(host=REDIS_HOST)
 
 
-REDIS_PREFIX = 'netflow'
+REDIS_PREFIX = 'netflow_'
 
 
 class NetFlowBot(Collector):
@@ -63,7 +63,7 @@ class NetFlowBot(Collector):
     # This method is called whenever the job needs to be done. It gets the parameters and performs fetching of data.
     @staticmethod
     def perform_job(*args, **job_params):
-        traffic_per_protocol = r.hgetall(f'{REDIS_PREFIX}_{REDIS_HASH_TRAFFIC_PER_PROTOCOL}')
+        traffic_per_protocol = r.hgetall(f'{REDIS_PREFIX}{REDIS_HASH_TRAFFIC_PER_PROTOCOL}')
         entity_info = job_params["entity_info"]
         values = []
         now = time.time()
@@ -71,7 +71,7 @@ class NetFlowBot(Collector):
             output_path = f'entity.{entity_info["entity_id"]}.netflow.traffic_per_protocol.{protocol.decode("utf-8")}'
 
             # since we are getting the counters, convert them to values:
-            dv, dt = convert_counter_to_value(f'{REDIS_PREFIX}_counter_{output_path}', traffic_counter, now)
+            dv, dt = convert_counter_to_value(f'{REDIS_PREFIX}counter_{output_path}', traffic_counter, now)
             if dv is None:
                 continue
             values.append({

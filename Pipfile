@@ -12,6 +12,7 @@ python-dotenv = "*"
 ansicolors = "*"
 grafoleancollector = "*"
 redis = "*"
+psycopg2-binary = "*"
 
 [requires]
 python_version = "3.6"

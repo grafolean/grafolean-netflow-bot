@@ -6,6 +6,7 @@ import os
 import sys
 import time
 from collections import defaultdict
+from datetime import datetime
 
 from colors import color
 import dotenv
@@ -17,6 +18,8 @@ sys.path.append(os.path.dirname(os.path.realpath(__file__)) + '/pynetflow')
 from pynetflow.main import get_export_packets
 
 from lookup import PROTOCOLS, REDIS_HASH_TRAFFIC_PER_PROTOCOL
+
+from dbutils import migrate_if_needed, db, DB_PREFIX
 
 
 logging.basicConfig(format='%(asctime)s | %(levelname)s | %(message)s',
@@ -32,25 +35,35 @@ REDIS_HOST = os.environ.get('REDIS_HOST', '127.0.0.1')
 r = redis.Redis(host=REDIS_HOST)
 
 
-REDIS_PREFIX = 'netflow'
+REDIS_PREFIX = 'netflow_'
 
 
 def process_netflow(netflow_port):
     for ts, client, export in get_export_packets('0.0.0.0', NETFLOW_PORT):
         data = defaultdict(int)
-        for flow in export.flows:
-            protocol = flow.data['PROTOCOL']
-            in_bytes = flow.data['IN_BYTES']
 
-            protocol_str = PROTOCOLS.get(protocol, f'?{protocol}')
-            data[protocol_str] += in_bytes
+        with db.cursor() as c:
+            for flow in export.flows:
+                protocol = flow.data['PROTOCOL']
+                in_bytes = flow.data['IN_BYTES']
+
+                protocol_str = PROTOCOLS.get(protocol, f'?{protocol}')
+                data[protocol_str] += in_bytes
+
+                client_ip, client_port = client
+                client_str = f'{client_ip}:{client_port}'
+                ts_str = datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S.%f')
+                c.execute(f'INSERT INTO {DB_PREFIX}flows (version, client, ts, data) VALUES (%s, %s, %s, %s);', (export.header.version, client_str, ts_str, flow.data,))
 
         for k, v in data.items():
-            r.hincrby(f'{REDIS_PREFIX}_{REDIS_HASH_TRAFFIC_PER_PROTOCOL}', k, v)
+            r.hincrby(f'{REDIS_PREFIX}{REDIS_HASH_TRAFFIC_PER_PROTOCOL}', k, v)
 
 
 if __name__ == "__main__":
     dotenv.load_dotenv()
+
+    migrate_if_needed()
+
     NETFLOW_PORT = int(os.environ.get('NETFLOW_PORT', 2055))
     try:
         process_netflow(NETFLOW_PORT)
