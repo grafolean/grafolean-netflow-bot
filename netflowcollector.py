@@ -50,10 +50,9 @@ def process_netflow(netflow_port):
                 protocol_str = PROTOCOLS.get(protocol, f'?{protocol}')
                 data[protocol_str] += in_bytes
 
-                client_ip, client_port = client
-                client_str = f'{client_ip}:{client_port}'
+                client_ip, _ = client
                 ts_str = datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S.%f')
-                c.execute(f'INSERT INTO {DB_PREFIX}flows (version, client, ts, data) VALUES (%s, %s, %s, %s);', (export.header.version, client_str, ts_str, flow.data,))
+                c.execute(f'INSERT INTO {DB_PREFIX}flows (version, client, ts, data) VALUES (%s, %s, %s, %s);', (export.header.version, client_ip, ts_str, flow.data,))
 
         for k, v in data.items():
             r.hincrby(f'{REDIS_PREFIX}{REDIS_HASH_TRAFFIC_PER_PROTOCOL}', k, v)
