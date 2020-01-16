@@ -5,21 +5,14 @@ import logging
 import os
 import sys
 import time
-from collections import defaultdict
 from datetime import datetime
 
 from colors import color
-import dotenv
-import redis
 
 # python-netflow-v9-softflowd expects main.py to be the main entrypoint, but we only need
 # get_export_packets() iterator:
 sys.path.append(os.path.dirname(os.path.realpath(__file__)) + '/pynetflow')
 from pynetflow.main import get_export_packets
-
-from lookup import PROTOCOLS, REDIS_HASH_TRAFFIC_PER_PROTOCOL
-
-from dbutils import migrate_if_needed, db, DB_PREFIX
 
 
 logging.basicConfig(format='%(asctime)s | %(levelname)s | %(message)s',
@@ -31,41 +24,36 @@ logging.addLevelName(logging.ERROR, color('ERR', bg='red'))
 log = logging.getLogger("{}.{}".format(__name__, "base"))
 
 
-REDIS_HOST = os.environ.get('REDIS_HOST', '127.0.0.1')
-r = redis.Redis(host=REDIS_HOST)
-
-
-REDIS_PREFIX = 'netflow_'
-
-
-def process_netflow(netflow_port):
-    for ts, client, export in get_export_packets('0.0.0.0', NETFLOW_PORT):
-        data = defaultdict(int)
-
-        with db.cursor() as c:
-            for flow in export.flows:
-                protocol = flow.data['PROTOCOL']
-                in_bytes = flow.data['IN_BYTES']
-
-                protocol_str = PROTOCOLS.get(protocol, f'?{protocol}')
-                data[protocol_str] += in_bytes
-
-                client_ip, _ = client
-                ts_str = datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S.%f')
-                c.execute(f'INSERT INTO {DB_PREFIX}flows (version, client, ts, data) VALUES (%s, %s, %s, %s);', (export.header.version, client_ip, ts_str, flow.data,))
-
-        for k, v in data.items():
-            r.hincrby(f'{REDIS_PREFIX}{REDIS_HASH_TRAFFIC_PER_PROTOCOL}', k, v)
+def process_netflow(netflow_port, named_pipe_filename):
+    # endless loop - read netflow packets, encode them to JSON and write them to named pipe:
+    with open(named_pipe_filename, "wb", 0) as fp:
+        for ts, client, export in get_export_packets('0.0.0.0', NETFLOW_PORT):
+            entry = {
+                "ts": ts,
+                "client": client,
+                "version": export.header.version,
+                "flows": [flow.data for flow in export.flows],
+            }
+            line = json.dumps(entry).encode() + b'\n'
+            fp.write(line)
 
 
 if __name__ == "__main__":
-    dotenv.load_dotenv()
 
-    migrate_if_needed()
+    NAMED_PIPE_FILENAME = os.environ.get('NAMED_PIPE_FILENAME', None)
+    if not NAMED_PIPE_FILENAME:
+        raise Exception("Please specify NAMED_PIPE_FILENAME environment var")
+
+    # wait for named pipe to exist:
+    while not os.path.exists(NAMED_PIPE_FILENAME):
+        log.info(f"Named pipe {NAMED_PIPE_FILENAME} does not exist yet, waiting...")
+        time.sleep(1.0)
 
     NETFLOW_PORT = int(os.environ.get('NETFLOW_PORT', 2055))
+    log.info(f"Listening for NetFlow traffic on UDP port {NETFLOW_PORT}")
+
     try:
-        process_netflow(NETFLOW_PORT)
+        process_netflow(NETFLOW_PORT, NAMED_PIPE_FILENAME)
     except KeyboardInterrupt:
         log.info("KeyboardInterrupt -> exit")
         pass

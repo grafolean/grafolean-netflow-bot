@@ -30,7 +30,7 @@ services:
 
 
   db:
-    image: postgres:9.6-alpine
+    image: postgres:12.1-alpine
     container_name: grafolean-netflow-db
     volumes:
       # You should always save DB data to a host directory unless you are prepared to lose it. By default
@@ -62,25 +62,50 @@ services:
 
 
   netflowcollector:
-    # This process collects NetFlow data:
+    # This process collects NetFlow data and writes it to a shared named pipe. The
+    # reason is that there is a Docker bug which causes UDP packets to change the source
+    # IP if processed within the Docker network. To avoid that, we have a collector
+    # listening on host network interface, then transferring the JSON-encoded data
+    # to a "writer" process within the network, which writes the data to DB.
     image: grafolean/grafolean-netflow-bot
     container_name: grafolean-netflow-collector
     environment:
-      - REDIS_HOST=redis
+      - NAMED_PIPE_FILENAME=/shared-grafolean/netflow.pipe
       - NETFLOW_PORT=2055
+    ports:
+      - "${NETFLOW_PORT:-2055}:2055/udp"
+    restart: always
+    # NetFlow collector uses the same docker image as bot (grafolean/grafolean-netflow-bot),
+    # but specifies a different entrypoint:
+    entrypoint:
+      - python
+      - -m
+      - netflowcollector
+    volumes:
+      - shared-grafolean:/shared-grafolean
+    network_mode: "host"
+
+
+  netflowwriter:
+    # Reads netflow data from named pipe and writes it to DB / Redis.
+    image: grafolean/grafolean-netflow-bot
+    container_name: grafolean-netflow-writer
+    environment:
+      - NAMED_PIPE_FILENAME=/shared-grafolean/netflow.pipe
+      - REDIS_HOST=redis
       - DB_HOST=db
       - DB_DATABASE=${DB_NAME:-grafolean}
       - DB_USERNAME=${DB_USER:-admin}
       - DB_PASSWORD=${DB_PASS:-admin}
-    ports:
-      - "${NETFLOW_PORT:-2055}:2055/udp"
     restart: always
     # CAREFUL: NetFlow collector uses the same docker image as bot
     # (grafolean/grafolean-netflow-bot), but specifies a different entrypoint:
     entrypoint:
       - python
       - -m
-      - netflowcollector
+      - netflowwriter
+    volumes:
+      - shared-grafolean:/shared-grafolean
     networks:
       - grafolean
 
@@ -98,8 +123,8 @@ services:
       - grafolean
 
 
-# If running on the same host, join the Grafolean network, so we can reach Grafolean
-# backend at address grafolean:80.
 networks:
   grafolean:
-#    name: grafolean
+
+volumes:
+  shared-grafolean:

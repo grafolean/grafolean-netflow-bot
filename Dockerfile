@@ -9,8 +9,8 @@ FROM python:3.6-slim-stretch as build-backend
 COPY ./ /netflowbot/
 WORKDIR /netflowbot
 RUN \
+    rm -rf .git/ tests/ .vscode/ .pytest_cache/ __pycache__/ && \
     find ./ ! -name '*.py' -type f -exec rm '{}' ';' && \
-    rm -rf tests/ .vscode/ .pytest_cache/ __pycache__/ && \
     python3.6 -m compileall -b ./ && \
     find ./ -name '*.py' -exec rm '{}' ';'
 
