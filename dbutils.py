@@ -135,4 +135,5 @@ def migration_step_1():
 
 def migration_step_2():
     with db.cursor() as c:
-        c.execute(f'CREATE TABLE {DB_PREFIX}flows (version SMALLSERIAL NOT NULL, client TEXT, ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, data JSONB NOT NULL);')
+        c.execute(f'CREATE TABLE {DB_PREFIX}flows (seq BIGSERIAL NOT NULL PRIMARY KEY, version SMALLSERIAL NOT NULL, client TEXT, ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, data JSONB NOT NULL);')
+
