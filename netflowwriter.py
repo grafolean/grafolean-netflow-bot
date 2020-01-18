@@ -64,6 +64,7 @@ if __name__ == "__main__":
     if not NAMED_PIPE_FILENAME:
         raise Exception("Please specify NAMED_PIPE_FILENAME environment var")
 
+    migrate_if_needed()
     try:
         process_named_pipe(NAMED_PIPE_FILENAME)
     except KeyboardInterrupt:
