@@ -119,7 +119,7 @@ class NetFlowBot(Collector):
                     {DB_PREFIX}records "r",
                     {DB_PREFIX}flows "f"
                 WHERE
-                    r.ts >= '%s' AND
+                    r.ts >= %s AND
                     f.data->'DIRECTION' = 0
                 GROUP BY
                     f.data->'INPUT_SNMP'
@@ -146,7 +146,7 @@ class NetFlowBot(Collector):
                     {DB_PREFIX}records "r",
                     {DB_PREFIX}flows "f"
                 WHERE
-                    r.ts >= '%s' AND
+                    r.ts >= %s AND
                     f.data->'DIRECTION' = 1
                 GROUP BY
                     f.data->'INPUT_SNMP'
