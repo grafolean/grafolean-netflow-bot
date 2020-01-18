@@ -13,6 +13,9 @@ services:
     #   image: grafolean/grafolean-netflow-bot:v1.0.0
     image: grafolean/grafolean-netflow-bot
     container_name: grafolean-netflow-bot
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       # Backend url must be set to the address of the Grafolean backend, for example this uses Grafolean hosted service:
       # - BACKEND_URL=https://grafolean.com/api
@@ -64,6 +67,9 @@ services:
     # to a "writer" process within the network, which writes the data to DB.
     image: grafolean/grafolean-netflow-bot
     container_name: grafolean-netflow-collector
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       - NAMED_PIPE_FILENAME=/shared-grafolean/netflow.pipe
       - NETFLOW_PORT=2055
@@ -85,6 +91,9 @@ services:
     # Reads netflow data from named pipe and writes it to DB.
     image: grafolean/grafolean-netflow-bot
     container_name: grafolean-netflow-writer
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       - NAMED_PIPE_FILENAME=/shared-grafolean/netflow.pipe
       - DB_HOST=db
