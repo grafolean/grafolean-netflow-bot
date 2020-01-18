@@ -117,7 +117,7 @@ class NetFlowBot(Collector):
                     sum((f.data->'IN_BYTES')::integer)
                 FROM
                     {DB_PREFIX}records "r",
-                    {DB_PREFIX}flows "f",
+                    {DB_PREFIX}flows "f"
                 WHERE
                     r.ts >= '%s' AND
                     f.data->'DIRECTION' = 0
@@ -144,7 +144,7 @@ class NetFlowBot(Collector):
                     sum((f.data->'IN_BYTES')::integer)
                 FROM
                     {DB_PREFIX}records "r",
-                    {DB_PREFIX}flows "f",
+                    {DB_PREFIX}flows "f"
                 WHERE
                     r.ts >= '%s' AND
                     f.data->'DIRECTION' = 1
