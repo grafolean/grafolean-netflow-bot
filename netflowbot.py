@@ -155,7 +155,7 @@ class NetFlowBot(Collector):
             """, (from_time,))
 
             values = []
-            for interface_index, traffic_bytes in c.fetch():
+            for interface_index, traffic_bytes in c.fetchall():
                 output_path = f'{output_path_prefix}.traffic_in.{interface_index}.if{interface_index}'
                 values.append({
                     'p': output_path,
