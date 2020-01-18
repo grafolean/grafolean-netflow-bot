@@ -151,7 +151,7 @@ class NetFlowBot(Collector):
                     r.seq = f.record AND
                     ((f.data->'DIRECTION')::integer) = 1
                 GROUP BY
-                    f.data->'INPUT_SNMP'
+                    f.data->'OUTPUT_SNMP'
             """, (from_time,))
 
             values = []
