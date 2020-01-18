@@ -38,8 +38,10 @@ WORKDIR /netflowbot
 HEALTHCHECK --interval=10s --retries=1 CMD /bin/bash -c "[ ! -f /tmp/fail_health_check ] || ( rm /tmp/fail_health_check && exit 1 )"
 
 # CAREFUL:
-# There are two entrypoints, both of which should be running:
-# - netflowcollector: gathering packets and writing statistics to Redis
+# There are three entrypoints, all of which should be running: (use docker-compose.yml to start 3 services)
+# - netflowcollector: gathering packets and writing them to named pipe
+# - netflowwriter: reading packets from named pipe and writing them to DB
 # - netflowbot: Grafolean bot for NetFlow - sending data to Grafolean according to configured sensors
-#CMD ["python", "-m", "netflowcollector"]
+# CMD ["python", "-m", "netflowcollector"]
+# CMD ["python", "-m", "netflowwriter"]
 CMD ["python", "-m", "netflowbot"]

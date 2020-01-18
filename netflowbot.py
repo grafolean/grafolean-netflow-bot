@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime, timedelta
 import gzip
 import json
 import logging
@@ -9,12 +10,11 @@ from collections import defaultdict
 
 from colors import color
 import dotenv
-import redis
 import requests
 
 from grafoleancollector import Collector, send_results_to_grafolean
-
-from lookup import PROTOCOLS, REDIS_HASH_TRAFFIC_PER_PROTOCOL
+from dbutils import db, DB_PREFIX
+from lookup import PROTOCOLS
 
 logging.basicConfig(format='%(asctime)s | %(levelname)s | %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S', level=logging.DEBUG)
@@ -23,13 +23,6 @@ logging.addLevelName(logging.INFO, "INF")
 logging.addLevelName(logging.WARNING, color('WRN', fg='red'))
 logging.addLevelName(logging.ERROR, color('ERR', bg='red'))
 log = logging.getLogger("{}.{}".format(__name__, "base"))
-
-
-REDIS_HOST = os.environ.get('REDIS_HOST', '127.0.0.1')
-r = redis.Redis(host=REDIS_HOST)
-
-
-REDIS_PREFIX = 'netflow_'
 
 
 class NetFlowBot(Collector):
@@ -48,12 +41,17 @@ class NetFlowBot(Collector):
         #         yield job_id, intervals, NetFlowBot.perform_job, job_params
 
         # mock the jobs for now: (until frontend is done)
-        job_id = 'traffic_per_protocol'
+        job_id = 'traffic_in'
         intervals = [60]
         job_params = {
+            "job_id": job_id,
             "entity_info": {
                 "account_id": 129104112,
-                "entity_id": 123,
+                "entity_id": 236477687,
+                "entity_type": "device",
+                "details": {
+                    "ipv4": "1.2.3.4"
+                },
             },
             "backend_url": self.backend_url,
             "bot_token": self.bot_token,
@@ -63,21 +61,39 @@ class NetFlowBot(Collector):
     # This method is called whenever the job needs to be done. It gets the parameters and performs fetching of data.
     @staticmethod
     def perform_job(*args, **job_params):
-        traffic_per_protocol = r.hgetall(f'{REDIS_PREFIX}{REDIS_HASH_TRAFFIC_PER_PROTOCOL}')
-        entity_info = job_params["entity_info"]
-        values = []
-        now = time.time()
-        for protocol, traffic_counter in traffic_per_protocol.items():
-            output_path = f'entity.{entity_info["entity_id"]}.netflow.traffic_per_protocol.{protocol.decode("utf-8")}'
+        # {
+        #   "DST_AS": 0,
+        #   "SRC_AS": 0,
+        #   "IN_PKTS": 1,  # Incoming counter with length N x 8 bits for the number of packets associated with an IP Flow
+        #   "SRC_TOS": 0,
+        #   "DST_MASK": 0,
+        #   "IN_BYTES": 52,  # Incoming counter with length N x 8 bits for number of bytes associated with an IP Flow.
+        #   "PROTOCOL": 6,  # IP protocol
+        #   "SRC_MASK": 25,
+        #   "DIRECTION": 0,  # Flow direction: 0 - ingress flow, 1 - egress flow
+        #   "TCP_FLAGS": 20,
+        #   "INPUT_SNMP": 17,  # Input interface index
+        #   "L4_DST_PORT": 443,  # TCP/UDP destination port number
+        #   "L4_SRC_PORT": 36458,
+        #   "OUTPUT_SNMP": 3,  # Output interface index
+        #   "IPV4_DST_ADDR": "1.2.3.4",
+        #   "IPV4_NEXT_HOP": 1385497089,
+        #   "IPV4_SRC_ADDR": "4.3.2.1",
+        #   "LAST_SWITCHED": 2222830592,
+        #   "FIRST_SWITCHED": 2222830592,
+        #   "FLOW_SAMPLER_ID": 0,
+        #   "UNKNOWN_FIELD_TYPE": 0
+        # }
+        # https://www.cisco.com/en/US/technologies/tk648/tk362/technologies_white_paper09186a00800a3db9.html#wp9001622
 
-            # since we are getting the counters, convert them to values:
-            dv, dt = convert_counter_to_value(f'{REDIS_PREFIX}counter_{output_path}', traffic_counter, now)
-            if dv is None:
-                continue
-            values.append({
-                'p': output_path,
-                'v': dv / dt,
-            })
+        entity_info = job_params["entity_info"]
+        output_path_prefix = f'entity.{entity_info["entity_id"]}.netflow'
+
+        minute_ago = datetime.now() - timedelta(minutes=1)
+        values = []
+        # Traffic in and out: (per interface)
+        values.extend(NetFlowBot.get_values_traffic_in(output_path_prefix, minute_ago))
+        values.extend(NetFlowBot.get_values_traffic_out(output_path_prefix, minute_ago))
 
         if not values:
             log.warning("No values found to be sent to Grafolean")
@@ -91,33 +107,59 @@ class NetFlowBot(Collector):
             values,
         )
 
+    @staticmethod
+    def get_values_traffic_in(output_path_prefix, from_time):
+        with db.cursor() as c:
+            # TODO: missing check for IP: r.client_ip = %s AND
+            c.execute(f"""
+                SELECT
+                    f.data->'INPUT_SNMP',
+                    sum((f.data->'IN_BYTES')::integer)
+                FROM
+                    {DB_PREFIX}records "r",
+                    {DB_PREFIX}flows "f",
+                WHERE
+                    r.ts >= '%s' AND
+                    f.data->'DIRECTION' = 0
+                GROUP BY
+                    f.data->'INPUT_SNMP'
+            """, (from_time))
 
-def _get_previous_counter_value(counter_ident):
-    prev_value = r.hgetall(counter_ident)
-    if not prev_value:  # empty dict
-        return None, None
-    return int(prev_value[b'v']), float(prev_value[b't'])
+            values = []
+            for interface_index, traffic_bytes in c.fetch():
+                output_path = f'{output_path_prefix}.traffic_in.{interface_index}.if{interface_index}'
+                values.append({
+                    'p': output_path,
+                    'v': traffic_bytes / 60.,  # Bps
+                })
+            return values
 
+    @staticmethod
+    def get_values_traffic_out(output_path_prefix, from_time):
+        with db.cursor() as c:
+            # TODO: missing check for IP: r.client_ip = %s AND
+            c.execute(f"""
+                SELECT
+                    f.data->'OUTPUT_SNMP',
+                    sum((f.data->'IN_BYTES')::integer)
+                FROM
+                    {DB_PREFIX}records "r",
+                    {DB_PREFIX}flows "f",
+                WHERE
+                    r.ts >= '%s' AND
+                    f.data->'DIRECTION' = 1
+                GROUP BY
+                    f.data->'INPUT_SNMP'
+            """, (from_time))
 
-def _save_current_counter_value(new_value, now, counter_ident):
-    r.hmset(counter_ident, {b'v': new_value, b't': now})
-
-
-def convert_counter_to_value(counter_ident, new_value, now):
-    old_value, t = _get_previous_counter_value(counter_ident)
-    new_value = int(float(new_value))
-    _save_current_counter_value(new_value, now, counter_ident)
-    if old_value is None:
-        # no previous counter, can't calculate value:
-        log.debug(f"Counter {counter_ident} has no previous value.")
-        return None, None
-    if new_value < old_value:
-        # new counter value is lower than the old one, probably overflow: (or reset)
-        log.warning(f"Counter overflow detected for counter {counter_ident}, discarding value - if this happens often, consider decreasing polling interval.")
-        return None, None
-    dt = now - t
-    dv = new_value - old_value
-    return dv, dt
+            values = []
+            for interface_index, traffic_bytes in c.fetch():
+                output_path = f'{output_path_prefix}.traffic_in.{interface_index}.if{interface_index}'
+                values.append({
+                    'p': output_path,
+                    'v': traffic_bytes / 60.,  # Bps
+                })
+            return values
 
 
 def wait_for_grafolean(backend_url):

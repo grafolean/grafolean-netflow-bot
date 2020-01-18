@@ -1,5 +1,3 @@
-REDIS_HASH_TRAFFIC_PER_PROTOCOL = "tpp"
-
 PROTOCOLS = {
     0: "HOPOPT",
     1: "ICMP",

@@ -11,7 +11,6 @@ requests = "*"
 python-dotenv = "*"
 ansicolors = "*"
 grafoleancollector = "*"
-redis = "*"
 psycopg2-binary = "*"
 
 [requires]

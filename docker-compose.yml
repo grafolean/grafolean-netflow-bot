@@ -23,7 +23,10 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       # Interval between fetching information about jobs:
       - JOBS_REFRESH_INTERVAL=${JOBS_REFRESH_INTERVAL:-60}
-      - REDIS_HOST=redis
+      - DB_HOST=db
+      - DB_DATABASE=${DB_NAME:-grafolean}
+      - DB_USERNAME=${DB_USER:-admin}
+      - DB_PASSWORD=${DB_PASS:-admin}
     restart: always
     networks:
       - grafolean
@@ -49,14 +52,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-    networks:
-      - grafolean
-
-
-  redis:
-    image: redis:5-alpine
-    container_name: grafolean-netflow-bot-redis
-    restart: always
     networks:
       - grafolean
 
@@ -87,12 +82,11 @@ services:
 
 
   netflowwriter:
-    # Reads netflow data from named pipe and writes it to DB / Redis.
+    # Reads netflow data from named pipe and writes it to DB.
     image: grafolean/grafolean-netflow-bot
     container_name: grafolean-netflow-writer
     environment:
       - NAMED_PIPE_FILENAME=/shared-grafolean/netflow.pipe
-      - REDIS_HOST=redis
       - DB_HOST=db
       - DB_DATABASE=${DB_NAME:-grafolean}
       - DB_USERNAME=${DB_USER:-admin}
