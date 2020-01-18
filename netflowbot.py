@@ -120,7 +120,7 @@ class NetFlowBot(Collector):
                     {DB_PREFIX}flows "f"
                 WHERE
                     r.ts >= %s AND
-                    f.data->'DIRECTION' = 0
+                    ((f.data->'DIRECTION')::integer) = 1
                 GROUP BY
                     f.data->'INPUT_SNMP'
             """, (from_time,))
@@ -147,7 +147,7 @@ class NetFlowBot(Collector):
                     {DB_PREFIX}flows "f"
                 WHERE
                     r.ts >= %s AND
-                    f.data->'DIRECTION' = 1
+                    ((f.data->'DIRECTION')::integer) = 1
                 GROUP BY
                     f.data->'INPUT_SNMP'
             """, (from_time,))
