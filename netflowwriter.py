@@ -49,7 +49,7 @@ def write_record(j):
         # first save the flow record:
         ts = datetime.utcfromtimestamp(j["ts"])
         c.execute(f"INSERT INTO {DB_PREFIX}records (ts, client_ip, version) VALUES (%s, %s, %s) RETURNING seq;", (ts, j['client'][0], j['version'],))
-        record_seq = c.fetch_one()[0]
+        record_seq = c.fetchone()[0]
 
         # then save each of the flows within the record, but use execute_values() to perform bulk insert:
         def _get_data(record_seq, flows):
