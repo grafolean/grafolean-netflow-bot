@@ -40,7 +40,6 @@ def process_named_pipe(named_pipe_filename):
                     log.info("Named pipe closed")
                     break
 
-                log.info(f"Received record: {len(line)} bytes")
                 write_record(json.loads(line))
 
 
@@ -48,6 +47,7 @@ def write_record(j):
     with db.cursor() as c:
         # first save the flow record:
         ts = datetime.utcfromtimestamp(j["ts"])
+        log.info(f"Received record: {ts} from {j['client'][0]}")
         c.execute(f"INSERT INTO {DB_PREFIX}records (ts, client_ip, version) VALUES (%s, %s, %s) RETURNING seq;", (ts, j['client'][0], j['version'],))
         record_seq = c.fetchone()[0]
 
