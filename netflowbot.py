@@ -123,7 +123,7 @@ class NetFlowBot(Collector):
                     f.data->'DIRECTION' = 0
                 GROUP BY
                     f.data->'INPUT_SNMP'
-            """, (from_time))
+            """, (from_time,))
 
             values = []
             for interface_index, traffic_bytes in c.fetch():
@@ -150,7 +150,7 @@ class NetFlowBot(Collector):
                     f.data->'DIRECTION' = 1
                 GROUP BY
                     f.data->'INPUT_SNMP'
-            """, (from_time))
+            """, (from_time,))
 
             values = []
             for interface_index, traffic_bytes in c.fetch():
