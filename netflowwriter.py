@@ -16,7 +16,7 @@ from lookup import PROTOCOLS
 from dbutils import migrate_if_needed, db, DB_PREFIX
 
 
-logging.basicConfig(format='%(asctime)s | %(levelname)s | %(message)s',
+logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S', level=logging.DEBUG)
 logging.addLevelName(logging.DEBUG, color("DBG", 7))
 logging.addLevelName(logging.INFO, "INF")
@@ -46,9 +46,9 @@ def process_named_pipe(named_pipe_filename):
 def write_record(j):
     with db.cursor() as c:
         # first save the flow record:
-        ts = datetime.utcfromtimestamp(j["ts"])
-        log.info(f"Received record: {ts} from {j['client'][0]}")
-        c.execute(f"INSERT INTO {DB_PREFIX}records (ts, client_ip, version) VALUES (%s, %s, %s) RETURNING seq;", (ts, j['client'][0], j['version'],))
+        ts = datetime.utcfromtimestamp(j['ts'])
+        log.info(f"Received record: {ts} from {j['client']}")
+        c.execute(f"INSERT INTO {DB_PREFIX}records (ts, client_ip) VALUES (%s, %s) RETURNING seq;", (ts, j['client'],))
         record_seq = c.fetchone()[0]
 
         # then save each of the flows within the record, but use execute_values() to perform bulk insert:

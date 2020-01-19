@@ -16,7 +16,7 @@ from grafoleancollector import Collector, send_results_to_grafolean
 from dbutils import db, DB_PREFIX
 from lookup import PROTOCOLS
 
-logging.basicConfig(format='%(asctime)s | %(levelname)s | %(message)s',
+logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S', level=logging.DEBUG)
 logging.addLevelName(logging.DEBUG, color("DBG", 7))
 logging.addLevelName(logging.INFO, "INF")
@@ -90,10 +90,12 @@ class NetFlowBot(Collector):
         output_path_prefix = f'entity.{entity_info["entity_id"]}.netflow'
 
         minute_ago = datetime.now() - timedelta(minutes=1)
+        two_minutes_ago = minute_ago - timedelta(minutes=1)
+
         values = []
         # Traffic in and out: (per interface)
-        values.extend(NetFlowBot.get_values_traffic_in(output_path_prefix, minute_ago))
-        values.extend(NetFlowBot.get_values_traffic_out(output_path_prefix, minute_ago))
+        values.extend(NetFlowBot.get_values_traffic_in(output_path_prefix, two_minutes_ago, minute_ago))
+        values.extend(NetFlowBot.get_values_traffic_out(output_path_prefix, two_minutes_ago, minute_ago))
 
         if not values:
             log.warning("No values found to be sent to Grafolean")
@@ -108,7 +110,7 @@ class NetFlowBot(Collector):
         )
 
     @staticmethod
-    def get_values_traffic_in(output_path_prefix, from_time):
+    def get_values_traffic_in(output_path_prefix, from_time, to_time):
         with db.cursor() as c:
             # TODO: missing check for IP: r.client_ip = %s AND
             c.execute(f"""
@@ -120,11 +122,12 @@ class NetFlowBot(Collector):
                     {DB_PREFIX}flows "f"
                 WHERE
                     r.ts >= %s AND
+                    r.ts < %s AND
                     r.seq = f.record AND
                     ((f.data->'DIRECTION')::integer) = 1
                 GROUP BY
                     f.data->'INPUT_SNMP'
-            """, (from_time,))
+            """, (from_time, to_time,))
 
             values = []
             for interface_index, traffic_bytes in c.fetchall():
@@ -136,7 +139,7 @@ class NetFlowBot(Collector):
             return values
 
     @staticmethod
-    def get_values_traffic_out(output_path_prefix, from_time):
+    def get_values_traffic_out(output_path_prefix, from_time, to_time):
         with db.cursor() as c:
             # TODO: missing check for IP: r.client_ip = %s AND
             c.execute(f"""
@@ -148,11 +151,12 @@ class NetFlowBot(Collector):
                     {DB_PREFIX}flows "f"
                 WHERE
                     r.ts >= %s AND
+                    r.ts < %s AND
                     r.seq = f.record AND
                     ((f.data->'DIRECTION')::integer) = 1
                 GROUP BY
                     f.data->'OUTPUT_SNMP'
-            """, (from_time,))
+            """, (from_time, to_time,))
 
             values = []
             for interface_index, traffic_bytes in c.fetchall():

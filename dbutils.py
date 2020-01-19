@@ -141,3 +141,7 @@ def migration_step_2():
 def migration_step_3():
     with db.cursor() as c:
         c.execute(f'CREATE INDEX {DB_PREFIX}records_ts ON {DB_PREFIX}records (ts);')
+
+def migration_step_4():
+    with db.cursor() as c:
+        c.execute(f'ALTER TABLE {DB_PREFIX}records DROP COLUMN version;')

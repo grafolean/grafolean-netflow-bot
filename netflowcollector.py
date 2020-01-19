@@ -15,7 +15,7 @@ sys.path.append(os.path.dirname(os.path.realpath(__file__)) + '/pynetflow')
 from pynetflow.main import get_export_packets
 
 
-logging.basicConfig(format='%(asctime)s | %(levelname)s | %(message)s',
+logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S', level=logging.DEBUG)
 logging.addLevelName(logging.DEBUG, color("DBG", 7))
 logging.addLevelName(logging.INFO, "INF")
@@ -26,16 +26,53 @@ log = logging.getLogger("{}.{}".format(__name__, "base"))
 
 def process_netflow(netflow_port, named_pipe_filename):
     # endless loop - read netflow packets, encode them to JSON and write them to named pipe:
-    with open(named_pipe_filename, "wb", 0) as fp:
-        for ts, client, export in get_export_packets('0.0.0.0', NETFLOW_PORT):
-            entry = {
-                "ts": ts,
-                "client": client,
-                "version": export.header.version,
-                "flows": [flow.data for flow in export.flows],
-            }
-            line = json.dumps(entry).encode() + b'\n'
-            fp.write(line)
+    line = None
+    last_record_seqs = {}
+    while True:
+        try:
+            with open(named_pipe_filename, "wb", 0) as fp:
+                # if named pipe threq an error for some reason (BrokenPipe), write the line we
+                # have in buffer before listening to new packets:
+                if line is not None:
+                    fp.write(line)
+                    line = None
+                for ts, client, export in get_export_packets('0.0.0.0', NETFLOW_PORT):
+                    if export.header.version != 9:
+                        log.error(f"Only Netflow v9 currently supported, ignoring record (version: [{export.header.version}])")
+                        continue
+
+                    client_ip, _ = client
+
+                    # check for missing records:
+                    last_record_seq = last_record_seqs.get(client_ip)
+                    if last_record_seq is None:
+                        log.warning(f"Last record sequence number is not known, starting with {export.header.sequence}")
+                    elif export.header.sequence != last_record_seq + 1:
+                        log.error(f"Sequence number ({export.header.sequence}) does not follow ({last_record_seq}), some records might have been skipped")
+                    last_record_seqs[client_ip] = export.header.sequence
+
+                    flows_data = [flow.data for flow in export.flows]
+                    entry = {
+                        "ts": ts,
+                        "client": client_ip,
+                        "flows": [{
+                            "IN_BYTES": data["IN_BYTES"],
+                            "PROTOCOL": data["PROTOCOL"],
+                            "DIRECTION": data["DIRECTION"],
+                            "INPUT_SNMP": data["INPUT_SNMP"],
+                            "L4_DST_PORT": data["L4_DST_PORT"],
+                            "L4_SRC_PORT": data["L4_SRC_PORT"],
+                            "OUTPUT_SNMP": data["OUTPUT_SNMP"],
+                            "IPV4_DST_ADDR": data["IPV4_DST_ADDR"],
+                            "IPV4_SRC_ADDR": data["IPV4_SRC_ADDR"],
+                        } for data in flows_data],
+                    }
+                    line = json.dumps(entry).encode() + b'\n'
+                    fp.write(line)
+                    line = None
+        except Exception as ex:
+            log.exception(f"Exception: {str(ex)}")
+
 
 
 if __name__ == "__main__":

@@ -109,6 +109,14 @@ services:
       - netflowwriter
     volumes:
       - shared-grafolean:/shared-grafolean
+    # To use py-spy:
+    #   - $ docker exec -ti grafolean-newflow-writer bash
+    #   - # pip install py-spy
+    #   - # py-spy -n -o /tmp/prof/out.svg --pid 1
+    # But first, these 3 lines below must be enabled, to add a volume and capabilities: (careful not to add spaces!)
+    #  - /tmp/prof/:/tmp/prof/
+    #cap_add:
+    #  - SYS_PTRACE
     networks:
       - grafolean
 
