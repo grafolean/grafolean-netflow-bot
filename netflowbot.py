@@ -96,6 +96,8 @@ class NetFlowBot(Collector):
         # Traffic in and out: (per interface)
         values.extend(NetFlowBot.get_values_traffic_in(output_path_prefix, two_minutes_ago, minute_ago))
         values.extend(NetFlowBot.get_values_traffic_out(output_path_prefix, two_minutes_ago, minute_ago))
+        values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=True))
+        values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=False))
 
         if not values:
             log.warning("No values found to be sent to Grafolean")
@@ -161,6 +163,41 @@ class NetFlowBot(Collector):
             values = []
             for interface_index, traffic_bytes in c.fetchall():
                 output_path = f'{output_path_prefix}.traffic_out.{interface_index}.if{interface_index}'
+                values.append({
+                    'p': output_path,
+                    'v': traffic_bytes / 60.,  # Bps
+                })
+            return values
+
+    @staticmethod
+    def get_top_N_IPs(output_path_prefix, from_time, to_time, interface_index, is_direction_in=True):
+        with db.cursor() as c:
+            # TODO: missing check for IP: r.client_ip = %s AND
+            c.execute(f"""
+                SELECT
+                    f.data->'IPV4_DST_ADDR',
+                    sum((f.data->'IN_BYTES')::integer) "traffic"
+                FROM
+                    netflow_records "r",
+                    netflow_flows "f"
+                WHERE
+                    r.ts >= %s AND
+                    r.ts < %s AND
+                    r.seq = f.record AND
+                    (f.data->'{'INPUT_SNMP' if is_direction_in else 'OUTPUT_SNMP'}')::integer = %s AND
+                    (f.data->'DIRECTION')::integer = {'0' if is_direction_in else '1'}
+                GROUP BY
+                    f.data->'IPV4_DST_ADDR'
+                ORDER BY
+                    traffic desc
+                LIMIT 10;
+            """, (from_time, to_time, interface_index,))
+
+#SELECT f.data->'IPV4_DST_ADDR', sum((f.data->'IN_BYTES')::integer) "traffic" FROM netflow_records "r", netflow_flows "f" WHERE r.ts >= now() - interval '1 minute' AND r.seq = f.record AND (f.data->'INPUT_SNMP')::integer = 18 AND (f.data->'DIRECTION')::integer = '0' GROUP BY f.data->'IPV4_DST_ADDR' ORDER BY traffic desc LIMIT 10;
+
+            values = []
+            for top_ip, traffic_bytes in c.fetchall():
+                output_path = f"{output_path_prefix}.topip.{'in' if is_direction_in else 'out'}.{interface_index}.if{interface_index}.{top_ip}"
                 values.append({
                     'p': output_path,
                     'v': traffic_bytes / 60.,  # Bps
