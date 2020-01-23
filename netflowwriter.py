@@ -54,10 +54,26 @@ def write_record(j):
         # then save each of the flows within the record, but use execute_values() to perform bulk insert:
         def _get_data(record_seq, flows):
             for flow in flows:
-                yield (record_seq, flow,)
+                yield (
+                    record_seq,
+                    flow.get('IN_BYTES'),
+                    flow.get('PROTOCOL'),
+                    flow.get('DIRECTION'),
+                    flow.get('L4_DST_PORT'),
+                    flow.get('L4_SRC_PORT'),
+                    flow.get('INPUT_SNMP'),
+                    flow.get('OUTPUT_SNMP'),
+                    flow.get('IPV4_DST_ADDR'),
+                    flow.get('IPV4_SRC_ADDR'),
+                )
         data_iterator = _get_data(record_seq, j['flows'])
-        psycopg2.extras.execute_values(c, f"INSERT INTO {DB_PREFIX}flows (record, data) VALUES %s", data_iterator, "(%s, %s)", page_size=100)
-
+        psycopg2.extras.execute_values(
+            c,
+            f"INSERT INTO {DB_PREFIX}flows (record, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, IPV4_DST_ADDR, IPV4_SRC_ADDR) VALUES %s",
+            data_iterator,
+            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            page_size=100
+        )
 
 if __name__ == "__main__":
     NAMED_PIPE_FILENAME = os.environ.get('NAMED_PIPE_FILENAME', None)
@@ -65,6 +81,7 @@ if __name__ == "__main__":
         raise Exception("Please specify NAMED_PIPE_FILENAME environment var")
 
     migrate_if_needed()
+
     try:
         process_named_pipe(NAMED_PIPE_FILENAME)
     except KeyboardInterrupt:

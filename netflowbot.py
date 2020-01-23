@@ -117,8 +117,8 @@ class NetFlowBot(Collector):
             # TODO: missing check for IP: r.client_ip = %s AND
             c.execute(f"""
                 SELECT
-                    f.data->'INPUT_SNMP',
-                    sum((f.data->'IN_BYTES')::integer)
+                    f.INPUT_SNMP,
+                    sum(f.IN_BYTES)
                 FROM
                     {DB_PREFIX}records "r",
                     {DB_PREFIX}flows "f"
@@ -126,9 +126,9 @@ class NetFlowBot(Collector):
                     r.ts >= %s AND
                     r.ts < %s AND
                     r.seq = f.record AND
-                    ((f.data->'DIRECTION')::integer) = 1
+                    f.DIRECTION = 0
                 GROUP BY
-                    f.data->'INPUT_SNMP'
+                    f.INPUT_SNMP
             """, (from_time, to_time,))
 
             values = []
@@ -146,8 +146,8 @@ class NetFlowBot(Collector):
             # TODO: missing check for IP: r.client_ip = %s AND
             c.execute(f"""
                 SELECT
-                    f.data->'OUTPUT_SNMP',
-                    sum((f.data->'IN_BYTES')::integer)
+                    f.OUTPUT_SNMP,
+                    sum(f.IN_BYTES)
                 FROM
                     {DB_PREFIX}records "r",
                     {DB_PREFIX}flows "f"
@@ -155,9 +155,9 @@ class NetFlowBot(Collector):
                     r.ts >= %s AND
                     r.ts < %s AND
                     r.seq = f.record AND
-                    ((f.data->'DIRECTION')::integer) = 1
+                    f.DIRECTION = 1
                 GROUP BY
-                    f.data->'OUTPUT_SNMP'
+                    f.OUTPUT_SNMP
             """, (from_time, to_time,))
 
             values = []
@@ -175,8 +175,8 @@ class NetFlowBot(Collector):
             # TODO: missing check for IP: r.client_ip = %s AND
             c.execute(f"""
                 SELECT
-                    f.data->'IPV4_DST_ADDR',
-                    sum((f.data->'IN_BYTES')::integer) "traffic"
+                    f.IPV4_DST_ADDR,
+                    sum(f.IN_BYTES) "traffic"
                 FROM
                     netflow_records "r",
                     netflow_flows "f"
@@ -184,10 +184,10 @@ class NetFlowBot(Collector):
                     r.ts >= %s AND
                     r.ts < %s AND
                     r.seq = f.record AND
-                    (f.data->'{'INPUT_SNMP' if is_direction_in else 'OUTPUT_SNMP'}')::integer = %s AND
-                    (f.data->'DIRECTION')::integer = {'0' if is_direction_in else '1'}
+                    f.{'INPUT_SNMP' if is_direction_in else 'OUTPUT_SNMP'} = %s AND
+                    f.DIRECTION = {'0' if is_direction_in else '1'}
                 GROUP BY
-                    f.data->'IPV4_DST_ADDR'
+                    f.IPV4_DST_ADDR
                 ORDER BY
                     traffic desc
                 LIMIT 10;

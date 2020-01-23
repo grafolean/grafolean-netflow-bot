@@ -135,13 +135,22 @@ def migration_step_1():
 
 def migration_step_2():
     with db.cursor() as c:
-        c.execute(f'CREATE TABLE {DB_PREFIX}records (seq BIGSERIAL NOT NULL PRIMARY KEY, ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, client_ip TEXT, version SMALLSERIAL NOT NULL);')
-        c.execute(f'CREATE TABLE {DB_PREFIX}flows (record INTEGER NOT NULL REFERENCES {DB_PREFIX}records(seq) ON DELETE CASCADE, data JSONB NOT NULL);')
-
-def migration_step_3():
-    with db.cursor() as c:
+        # UNLOGGED: Disabling WAL avoids high I/O load. Since NetFlow data is of temporary nature, this still
+        # allows us to perform queries, but if the database crashes it is acceptable to lose all of the records.
+        c.execute(f'CREATE UNLOGGED TABLE {DB_PREFIX}records (seq BIGSERIAL NOT NULL PRIMARY KEY, ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, client_ip TEXT);')
         c.execute(f'CREATE INDEX {DB_PREFIX}records_ts ON {DB_PREFIX}records (ts);')
 
-def migration_step_4():
-    with db.cursor() as c:
-        c.execute(f'ALTER TABLE {DB_PREFIX}records DROP COLUMN version;')
+        c.execute(f"""
+            CREATE UNLOGGED TABLE {DB_PREFIX}flows (
+                record INTEGER NOT NULL REFERENCES {DB_PREFIX}records(seq) ON DELETE CASCADE,
+                IN_BYTES INTEGER,
+                PROTOCOL SMALLINT,
+                DIRECTION SMALLINT,
+                L4_DST_PORT INTEGER,
+                L4_SRC_PORT INTEGER,
+                INPUT_SNMP SMALLINT,
+                OUTPUT_SNMP SMALLINT,
+                IPV4_DST_ADDR TEXT,
+                IPV4_SRC_ADDR TEXT
+            );
+        """)
