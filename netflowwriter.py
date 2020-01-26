@@ -47,15 +47,15 @@ def write_record(j):
     with db.cursor() as c:
         # first save the flow record:
         ts = datetime.utcfromtimestamp(j['ts'])
-        log.info(f"Received record: {ts} from {j['client']}")
+        log.info(f"Received record [{j['seq']}]: {ts} from {j['client']}")
         c.execute(f"INSERT INTO {DB_PREFIX}records (ts, client_ip) VALUES (%s, %s) RETURNING seq;", (ts, j['client'],))
-        record_seq = c.fetchone()[0]
+        record_db_seq = c.fetchone()[0]
 
         # then save each of the flows within the record, but use execute_values() to perform bulk insert:
-        def _get_data(record_seq, flows):
+        def _get_data(record_db_seq, flows):
             for flow in flows:
                 yield (
-                    record_seq,
+                    record_db_seq,
                     flow.get('IN_BYTES'),
                     flow.get('PROTOCOL'),
                     flow.get('DIRECTION'),
@@ -66,7 +66,7 @@ def write_record(j):
                     flow.get('IPV4_DST_ADDR'),
                     flow.get('IPV4_SRC_ADDR'),
                 )
-        data_iterator = _get_data(record_seq, j['flows'])
+        data_iterator = _get_data(record_db_seq, j['flows'])
         psycopg2.extras.execute_values(
             c,
             f"INSERT INTO {DB_PREFIX}flows (record, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, IPV4_DST_ADDR, IPV4_SRC_ADDR) VALUES %s",

@@ -9,10 +9,13 @@ from datetime import datetime
 
 from colors import color
 
+
 # python-netflow-v9-softflowd expects main.py to be the main entrypoint, but we only need
 # get_export_packets() iterator:
 sys.path.append(os.path.dirname(os.path.realpath(__file__)) + '/pynetflow')
 from pynetflow.main import get_export_packets
+# disable DEBUG logging on NetFlow collector library:
+logging.getLogger('pynetflow.main').setLevel(logging.INFO)
 
 
 logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
@@ -55,6 +58,7 @@ def process_netflow(netflow_port, named_pipe_filename):
                     entry = {
                         "ts": ts,
                         "client": client_ip,
+                        "seq": export.header.sequence,
                         "flows": [{
                             "IN_BYTES": data["IN_BYTES"],
                             "PROTOCOL": data["PROTOCOL"],
@@ -69,6 +73,7 @@ def process_netflow(netflow_port, named_pipe_filename):
                     }
                     line = json.dumps(entry).encode() + b'\n'
                     fp.write(line)
+                    log.debug(f"Wrote seq [{export.header.sequence}] from client [{client_ip}], ts [{ts}], n flows: [{len(flows_data)}]")
                     line = None
         except Exception as ex:
             log.exception(f"Exception: {str(ex)}")
