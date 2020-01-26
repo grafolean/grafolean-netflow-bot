@@ -58,6 +58,42 @@ class NetFlowBot(Collector):
         }
         yield job_id, intervals, NetFlowBot.perform_job, job_params
 
+        job_id = '1h'
+        intervals = [3600]
+        job_params = {
+            "job_id": job_id,
+            "entity_info": {
+                "account_id": 129104112,
+                "entity_id": 236477687,
+                "entity_type": "device",
+                "details": {
+                    "ipv4": "1.2.3.4"
+                },
+            },
+            "backend_url": self.backend_url,
+            "bot_token": self.bot_token,
+        }
+        yield job_id, intervals, NetFlowBot.perform_job, job_params
+
+        job_id = 'daily'
+        intervals = [3600 * 24]
+        job_params = {
+            "job_id": job_id,
+            "entity_info": {
+                "account_id": 129104112,
+                "entity_id": 236477687,
+                "entity_type": "device",
+                "details": {
+                    "ipv4": "1.2.3.4"
+                },
+            },
+            "backend_url": self.backend_url,
+            "bot_token": self.bot_token,
+        }
+        yield job_id, intervals, NetFlowBot.perform_job, job_params
+
+
+
     # This method is called whenever the job needs to be done. It gets the parameters and performs fetching of data.
     @staticmethod
     def perform_job(*args, **job_params):
@@ -86,18 +122,35 @@ class NetFlowBot(Collector):
         # }
         # https://www.cisco.com/en/US/technologies/tk648/tk362/technologies_white_paper09186a00800a3db9.html#wp9001622
 
-        entity_info = job_params["entity_info"]
-        output_path_prefix = f'entity.{entity_info["entity_id"]}.netflow'
-
-        minute_ago = datetime.now() - timedelta(minutes=1)
-        two_minutes_ago = minute_ago - timedelta(minutes=1)
-
+        affecting_intervals, = args
         values = []
-        # Traffic in and out: (per interface)
-        values.extend(NetFlowBot.get_values_traffic_in(output_path_prefix, two_minutes_ago, minute_ago))
-        values.extend(NetFlowBot.get_values_traffic_out(output_path_prefix, two_minutes_ago, minute_ago))
-        values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=True))
-        values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=False))
+        entity_info = job_params["entity_info"]
+
+        if 60 in affecting_intervals:
+            output_path_prefix = f'entity.{entity_info["entity_id"]}.netflow.traffic_in'
+
+            minute_ago = datetime.now() - timedelta(minutes=1)
+            two_minutes_ago = minute_ago - timedelta(minutes=1)
+
+            # Traffic in and out: (per interface)
+            values.extend(NetFlowBot.get_values_traffic_in(output_path_prefix, two_minutes_ago, minute_ago))
+            values.extend(NetFlowBot.get_values_traffic_out(output_path_prefix, two_minutes_ago, minute_ago))
+            values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=True))
+            values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=False))
+
+        # every hour, collect stats for the whole hour:
+        if 3600 in affecting_intervals:
+            output_path_prefix_1hour = f'entity.{entity_info["entity_id"]}.netflow.traffic.in.1hour'
+            hour_ago = minute_ago - timedelta(hours=1)
+            values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix_1hour, hour_ago, minute_ago, 18, is_direction_in=True))
+            values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix_1hour, hour_ago, minute_ago, 18, is_direction_in=False))
+
+        # every 24h, also collect stats for the whole day:
+        if 3600 * 24 in affecting_intervals:
+            output_path_prefix_1day = f'entity.{entity_info["entity_id"]}.netflow.traffic.in.1day'
+            day_ago = minute_ago - timedelta(days=1)
+            values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix_1day, day_ago, minute_ago, 18, is_direction_in=True))
+            values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix_1day, day_ago, minute_ago, 18, is_direction_in=False))
 
         if not values:
             log.warning("No values found to be sent to Grafolean")
@@ -133,7 +186,7 @@ class NetFlowBot(Collector):
 
             values = []
             for interface_index, traffic_bytes in c.fetchall():
-                output_path = f'{output_path_prefix}.traffic_in.{interface_index}.if{interface_index}'
+                output_path = f'{output_path_prefix}.{interface_index}.if{interface_index}'
                 values.append({
                     'p': output_path,
                     'v': traffic_bytes / 60.,  # Bps
