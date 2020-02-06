@@ -41,7 +41,7 @@ class NetFlowBot(Collector):
         #         yield job_id, intervals, NetFlowBot.perform_job, job_params
 
         # mock the jobs for now: (until frontend is done)
-        job_id = 'traffic_in'
+        job_id = '1min'
         intervals = [60]
         job_params = {
             "job_id": job_id,
@@ -75,7 +75,7 @@ class NetFlowBot(Collector):
         }
         yield job_id, intervals, NetFlowBot.perform_job, job_params
 
-        job_id = 'daily'
+        job_id = '24h'
         intervals = [3600 * 24]
         job_params = {
             "job_id": job_id,
@@ -122,35 +122,40 @@ class NetFlowBot(Collector):
         # }
         # https://www.cisco.com/en/US/technologies/tk648/tk362/technologies_white_paper09186a00800a3db9.html#wp9001622
 
-        affecting_intervals, = args
+        job_id = job_params["job_id"]
         values = []
         entity_info = job_params["entity_info"]
+        minute_ago = datetime.now() - timedelta(minutes=1)
 
-        if 60 in affecting_intervals:
+        if job_id == '1min':
             output_path_prefix = f'entity.{entity_info["entity_id"]}.netflow.traffic_in'
 
-            minute_ago = datetime.now() - timedelta(minutes=1)
             two_minutes_ago = minute_ago - timedelta(minutes=1)
 
             # Traffic in and out: (per interface)
             values.extend(NetFlowBot.get_values_traffic_in(output_path_prefix, two_minutes_ago, minute_ago))
             values.extend(NetFlowBot.get_values_traffic_out(output_path_prefix, two_minutes_ago, minute_ago))
+            # output_path_prefix = f'entity.{entity_info["entity_id"]}.netflow'
             values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=True))
             values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=False))
+            values.extend(NetFlowBot.get_top_N_protocols(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=True))
+            values.extend(NetFlowBot.get_top_N_protocols(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=False))
 
         # every hour, collect stats for the whole hour:
-        if 3600 in affecting_intervals:
+        elif job_id == '1h':
             output_path_prefix_1hour = f'entity.{entity_info["entity_id"]}.netflow.traffic.in.1hour'
             hour_ago = minute_ago - timedelta(hours=1)
             values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix_1hour, hour_ago, minute_ago, 18, is_direction_in=True))
             values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix_1hour, hour_ago, minute_ago, 18, is_direction_in=False))
 
         # every 24h, also collect stats for the whole day:
-        if 3600 * 24 in affecting_intervals:
+        elif job_id == '24h':
             output_path_prefix_1day = f'entity.{entity_info["entity_id"]}.netflow.traffic.in.1day'
             day_ago = minute_ago - timedelta(days=1)
             values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix_1day, day_ago, minute_ago, 18, is_direction_in=True))
             values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix_1day, day_ago, minute_ago, 18, is_direction_in=False))
+            values.extend(NetFlowBot.get_top_N_protocols(output_path_prefix_1day, day_ago, minute_ago, 18, is_direction_in=True))
+            values.extend(NetFlowBot.get_top_N_protocols(output_path_prefix_1day, day_ago, minute_ago, 18, is_direction_in=False))
 
         if not values:
             log.warning("No values found to be sent to Grafolean")
@@ -228,7 +233,7 @@ class NetFlowBot(Collector):
             # TODO: missing check for IP: r.client_ip = %s AND
             c.execute(f"""
                 SELECT
-                    f.IPV4_DST_ADDR,
+                    f.IPV4_{'SRC' if is_direction_in else 'DST'}_ADDR,
                     sum(f.IN_BYTES) "traffic"
                 FROM
                     netflow_records "r",
@@ -240,17 +245,48 @@ class NetFlowBot(Collector):
                     f.{'INPUT_SNMP' if is_direction_in else 'OUTPUT_SNMP'} = %s AND
                     f.DIRECTION = {'0' if is_direction_in else '1'}
                 GROUP BY
-                    f.IPV4_DST_ADDR
+                    f.IPV4_{'SRC' if is_direction_in else 'DST'}_ADDR
                 ORDER BY
                     traffic desc
                 LIMIT 10;
             """, (from_time, to_time, interface_index,))
 
-#SELECT f.data->'IPV4_DST_ADDR', sum((f.data->'IN_BYTES')::integer) "traffic" FROM netflow_records "r", netflow_flows "f" WHERE r.ts >= now() - interval '1 minute' AND r.seq = f.record AND (f.data->'INPUT_SNMP')::integer = 18 AND (f.data->'DIRECTION')::integer = '0' GROUP BY f.data->'IPV4_DST_ADDR' ORDER BY traffic desc LIMIT 10;
-
             values = []
             for top_ip, traffic_bytes in c.fetchall():
                 output_path = f"{output_path_prefix}.topip.{'in' if is_direction_in else 'out'}.{interface_index}.if{interface_index}.{top_ip}"
+                values.append({
+                    'p': output_path,
+                    'v': traffic_bytes / 60.,  # Bps
+                })
+            return values
+
+    @staticmethod
+    def get_top_N_protocols(output_path_prefix, from_time, to_time, interface_index, is_direction_in=True):
+        with db.cursor() as c:
+            # TODO: missing check for IP: r.client_ip = %s AND
+            c.execute(f"""
+                SELECT
+                    f.PROTOCOL,
+                    sum(f.IN_BYTES) "traffic"
+                FROM
+                    netflow_records "r",
+                    netflow_flows "f"
+                WHERE
+                    r.ts >= %s AND
+                    r.ts < %s AND
+                    r.seq = f.record AND
+                    f.{'INPUT_SNMP' if is_direction_in else 'OUTPUT_SNMP'} = %s AND
+                    f.DIRECTION = {'0' if is_direction_in else '1'}
+                GROUP BY
+                    f.PROTOCOL
+                ORDER BY
+                    traffic desc
+                LIMIT 10;
+            """, (from_time, to_time, interface_index,))
+
+            values = []
+            for protocol, traffic_bytes in c.fetchall():
+                output_path = f"{output_path_prefix}.topproto.{'in' if is_direction_in else 'out'}.{interface_index}.if{interface_index}.{protocol}.{PROTOCOLS[protocol]}"
                 values.append({
                     'p': output_path,
                     'v': traffic_bytes / 60.,  # Bps
