@@ -33,7 +33,7 @@ def process_named_pipe(named_pipe_filename):
             raise
 
     while True:
-        with open(named_pipe_filename, "rb", 0) as fp:
+        with open(named_pipe_filename, "rb") as fp:
             log.info(f"Opened named pipe {named_pipe_filename}")
             for line in fp:
                 if len(line) == 0:
