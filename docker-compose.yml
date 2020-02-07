@@ -14,7 +14,7 @@ services:
     image: grafolean/grafolean-netflow-bot
     container_name: grafolean-netflow-bot
     depends_on:
-      db:
+      redis:
         condition: service_healthy
     environment:
       # Backend url must be set to the address of the Grafolean backend, for example this uses Grafolean hosted service:
@@ -26,32 +26,23 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       # Interval between fetching information about jobs:
       - JOBS_REFRESH_INTERVAL=${JOBS_REFRESH_INTERVAL:-60}
-      - DB_HOST=db
-      - DB_DATABASE=${DB_NAME:-grafolean}
-      - DB_USERNAME=${DB_USER:-admin}
-      - DB_PASSWORD=${DB_PASS:-admin}
+      - REDIS_HOST=redis
     restart: always
     networks:
       - grafolean
 
 
-  db:
-    image: postgres:12.1-alpine
-    container_name: grafolean-netflow-db
-    volumes:
-      # You should always save DB data to a host directory unless you are prepared to lose it. By default
-      # this the location of data is '/grafolean/db/'.
-      # Note that if you ever wish to copy this directory as backup, you need to stop grafolean
-      # container first. For alternative backup approaches consult PostgreSQL documentation.
-      - ${DB_DIR:-/grafolean/netflow-db/}:/var/lib/postgresql/data/
-    environment:
-      - POSTGRES_DB=${DB_NAME:-grafolean}
-      - POSTGRES_USER=${DB_USER:-admin}
-      - POSTGRES_PASSWORD=${DB_PASS:-admin}
-
+  redis:
+    image: redis:5-alpine
+    container_name: grafolean-netflow-bot-redis
     restart: always
+    entrypoint: redis-server --appendonly yes
+    volumes:
+      # You should save Redis data to a host directory unless you are prepared to lose history
+      # whenever container restarts. By default the location of data is '/grafolean/redis/'.
+      - ${REDIS_DIR:-/grafolean/redis/}:/data/
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h db -t 1 -q"]
+      test: ["CMD-SHELL", "redis-cli ping"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -68,7 +59,7 @@ services:
     image: grafolean/grafolean-netflow-bot
     container_name: grafolean-netflow-collector
     depends_on:
-      db:
+      redis:
         condition: service_healthy
     environment:
       - NAMED_PIPE_FILENAME=/shared-grafolean/netflow.pipe
@@ -92,14 +83,11 @@ services:
     image: grafolean/grafolean-netflow-bot
     container_name: grafolean-netflow-writer
     depends_on:
-      db:
+      redis:
         condition: service_healthy
     environment:
       - NAMED_PIPE_FILENAME=/shared-grafolean/netflow.pipe
-      - DB_HOST=db
-      - DB_DATABASE=${DB_NAME:-grafolean}
-      - DB_USERNAME=${DB_USER:-admin}
-      - DB_PASSWORD=${DB_PASS:-admin}
+      - REDIS_HOST=redis
     restart: always
     # CAREFUL: NetFlow collector uses the same docker image as bot
     # (grafolean/grafolean-netflow-bot), but specifies a different entrypoint:
@@ -137,5 +125,6 @@ services:
 networks:
   grafolean:
 
+# We need a shared volume for a named pipe:
 volumes:
   shared-grafolean:

@@ -1,3 +1,5 @@
+DB_PREFIX = 'netflow_'
+
 PROTOCOLS = {
     0: "HOPOPT",
     1: "ICMP",

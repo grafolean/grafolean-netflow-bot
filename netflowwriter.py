@@ -9,11 +9,10 @@ import time
 from collections import defaultdict
 from datetime import datetime
 
-import psycopg2.extras
 from colors import color
+import redis
 
-from lookup import PROTOCOLS
-from dbutils import migrate_if_needed, db, DB_PREFIX
+from lookup import PROTOCOLS, DB_PREFIX
 
 
 logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
@@ -25,7 +24,11 @@ logging.addLevelName(logging.ERROR, color('ERR', bg='red'))
 log = logging.getLogger("{}.{}".format(__name__, "base"))
 
 
-def process_named_pipe(named_pipe_filename):
+REDIS_HOST = os.environ.get('REDIS_HOST', '127.0.0.1')
+r = redis.Redis(host=REDIS_HOST)
+
+
+def read_named_pipe(named_pipe_filename):
     try:
         os.mkfifo(named_pipe_filename)
     except OSError as ex:
@@ -40,50 +43,39 @@ def process_named_pipe(named_pipe_filename):
                     log.info("Named pipe closed")
                     break
 
-                write_record(json.loads(line))
+                process_line(json.loads(line))
 
 
-def write_record(j):
-    with db.cursor() as c:
-        # first save the flow record:
-        ts = datetime.utcfromtimestamp(j['ts'])
-        log.info(f"Received record [{j['seq']}]: {ts} from {j['client']}")
-        c.execute(f"INSERT INTO {DB_PREFIX}records (ts, client_ip) VALUES (%s, %s) RETURNING seq;", (ts, j['client'],))
-        record_db_seq = c.fetchone()[0]
+def process_line(j):
+    ts, seq, client_ip = j['ts'], j['seq'], j['client']
+    log.info(f"Received record [{seq}]: {ts} from {client_ip}")
 
-        # then save each of the flows within the record, but use execute_values() to perform bulk insert:
-        def _get_data(record_db_seq, flows):
-            for flow in flows:
-                yield (
-                    record_db_seq,
-                    flow.get('IN_BYTES'),
-                    flow.get('PROTOCOL'),
-                    flow.get('DIRECTION'),
-                    flow.get('L4_DST_PORT'),
-                    flow.get('L4_SRC_PORT'),
-                    flow.get('INPUT_SNMP'),
-                    flow.get('OUTPUT_SNMP'),
-                    flow.get('IPV4_DST_ADDR'),
-                    flow.get('IPV4_SRC_ADDR'),
-                )
-        data_iterator = _get_data(record_db_seq, j['flows'])
-        psycopg2.extras.execute_values(
-            c,
-            f"INSERT INTO {DB_PREFIX}flows (record, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, IPV4_DST_ADDR, IPV4_SRC_ADDR) VALUES %s",
-            data_iterator,
-            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            page_size=100
-        )
+    data = defaultdict(int)
+    for flow in j['flows']:
+        in_bytes = flow.get('IN_BYTES')
+        protocol = flow.get('PROTOCOL')
+        direction = flow.get('DIRECTION')
+        l4_dst_port = flow.get('L4_DST_PORT')
+        l4_src_port = flow.get('L4_SRC_PORT')
+        input_snmp = flow.get('INPUT_SNMP')
+        output_snmp = flow.get('OUTPUT_SNMP')
+        ipv4_dst_addr = flow.get('IPV4_DST_ADDR')
+        ipv4_src_addr = flow.get('IPV4_SRC_ADDR')
+
+        protocol_str = PROTOCOLS.get(protocol, f'?{protocol}')
+        data[protocol_str] += in_bytes
+
+        for k, v in data.items():
+            r.hincrby(f'{DB_PREFIX}traffic_per_protocol', k, v)
+
 
 if __name__ == "__main__":
     NAMED_PIPE_FILENAME = os.environ.get('NAMED_PIPE_FILENAME', None)
     if not NAMED_PIPE_FILENAME:
         raise Exception("Please specify NAMED_PIPE_FILENAME environment var")
 
-    migrate_if_needed()
-
     try:
-        process_named_pipe(NAMED_PIPE_FILENAME)
+        read_named_pipe(NAMED_PIPE_FILENAME)
     except KeyboardInterrupt:
         log.info("KeyboardInterrupt -> exit")
         pass

@@ -11,7 +11,7 @@ requests = "*"
 python-dotenv = "*"
 ansicolors = "*"
 grafoleancollector = "*"
-psycopg2-binary = "*"
+redis = "*"
 
 [requires]
 python_version = "3.6"
