@@ -36,21 +36,35 @@ def read_named_pipe(named_pipe_filename):
             raise
 
     while True:
-        with open(named_pipe_filename, "rb", 0) as fp:
+        # instead of constantly writing, save the counters to memory and
+        # only flush them to Redis every X seconds:
+        FLUSH_REDIS_S = 3.0
+
+        next_flush = time.time() + FLUSH_REDIS_S
+        data = defaultdict(int)
+        with open(named_pipe_filename, 'rb') as fp:
             log.info(f"Opened named pipe {named_pipe_filename}")
             for line in fp:
                 if len(line) == 0:
                     log.info("Named pipe closed")
                     break
 
-                process_line(json.loads(line))
+                data = process_line(json.loads(line), data)
+
+                now = time.time()
+                if now < next_flush:
+                    continue
+                next_flush = now + FLUSH_REDIS_S
+
+                for k, v in data.items():
+                    r.hincrby(f'{DB_PREFIX}traffic_per_protocol', k, v)
+                data = defaultdict(int)
 
 
-def process_line(j):
+def process_line(j, data):
     ts, seq, client_ip = j['ts'], j['seq'], j['client']
     log.info(f"Received record [{seq}]: {ts} from {client_ip}")
 
-    data = defaultdict(int)
     for flow in j['flows']:
         in_bytes = flow.get('IN_BYTES')
         protocol = flow.get('PROTOCOL')
@@ -65,8 +79,8 @@ def process_line(j):
         protocol_str = PROTOCOLS.get(protocol, f'?{protocol}')
         data[protocol_str] += in_bytes
 
-        for k, v in data.items():
-            r.hincrby(f'{DB_PREFIX}traffic_per_protocol', k, v)
+    return data
+
 
 
 if __name__ == "__main__":
