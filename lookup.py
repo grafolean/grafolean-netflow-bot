@@ -1,5 +1,8 @@
 DB_PREFIX = 'netflow_'
 
+DIRECTION_INGRESS = 0
+DIRECTION_EGRESS = 1
+
 PROTOCOLS = {
     0: "HOPOPT",
     1: "ICMP",
