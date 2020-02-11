@@ -14,7 +14,7 @@ import requests
 
 from grafoleancollector import Collector, send_results_to_grafolean
 from dbutils import db, DB_PREFIX
-from lookup import PROTOCOLS
+from lookup import PROTOCOLS, DIRECTION_INGRESS, DIRECTION_EGRESS
 
 logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S', level=logging.DEBUG)
@@ -24,6 +24,26 @@ logging.addLevelName(logging.WARNING, color('WRN', fg='red'))
 logging.addLevelName(logging.ERROR, color('ERR', bg='red'))
 log = logging.getLogger("{}.{}".format(__name__, "base"))
 
+
+def _get_last_used_seq(job_id):
+    with db.cursor() as c:
+        c.execute(f'SELECT j.last_used_seq, r.ts FROM {DB_PREFIX}bot_jobs j, {DB_PREFIX}records r WHERE j.id = %s and j.last_used_seq == r.seq;', (job_id,))
+        last_used_seq, ts = c.fetchone()
+        return last_used_seq, ts
+
+def _get_current_max_seq():
+    with db.cursor() as c:
+        c.execute(f"SELECT MAX(seq) FROM {DB_PREFIX}records;")
+        max_seq, = c.fetchone()
+        return max_seq
+
+def _save_current_max_seq(job_id, seq):
+    with db.cursor() as c:
+        c.execute(f"INSERT INTO {DB_PREFIX}bot_jobs (job_id, last_used_seq) VALUES (%s, %s) ON CONFLICT (job_id) DO UPDATE SET last_used_seq = %s;", (job_id, seq, seq))
+
+
+def get_entities():
+    requests.get()
 
 class NetFlowBot(Collector):
 
@@ -45,6 +65,7 @@ class NetFlowBot(Collector):
         intervals = [60]
         job_params = {
             "job_id": job_id,
+            "interval_slug": '1min',
             "entity_info": {
                 "account_id": 129104112,
                 "entity_id": 236477687,
@@ -58,104 +79,123 @@ class NetFlowBot(Collector):
         }
         yield job_id, intervals, NetFlowBot.perform_job, job_params
 
-        job_id = '1h'
-        intervals = [3600]
-        job_params = {
-            "job_id": job_id,
-            "entity_info": {
-                "account_id": 129104112,
-                "entity_id": 236477687,
-                "entity_type": "device",
-                "details": {
-                    "ipv4": "1.2.3.4"
-                },
-            },
-            "backend_url": self.backend_url,
-            "bot_token": self.bot_token,
-        }
-        yield job_id, intervals, NetFlowBot.perform_job, job_params
+        # job_id = '1h'
+        # intervals = [3600]
+        # job_params = {
+        #     "job_id": job_id,
+        #     "interval_slug": '1h',
+        #     "entity_info": {
+        #         "account_id": 129104112,
+        #         "entity_id": 236477687,
+        #         "entity_type": "device",
+        #         "details": {
+        #             "ipv4": "1.2.3.4"
+        #         },
+        #     },
+        #     "backend_url": self.backend_url,
+        #     "bot_token": self.bot_token,
+        # }
+        # yield job_id, intervals, NetFlowBot.perform_job, job_params
 
-        job_id = '24h'
-        intervals = [3600 * 24]
-        job_params = {
-            "job_id": job_id,
-            "entity_info": {
-                "account_id": 129104112,
-                "entity_id": 236477687,
-                "entity_type": "device",
-                "details": {
-                    "ipv4": "1.2.3.4"
-                },
-            },
-            "backend_url": self.backend_url,
-            "bot_token": self.bot_token,
-        }
-        yield job_id, intervals, NetFlowBot.perform_job, job_params
-
+        # job_id = '24h'
+        # intervals = [3600 * 24]
+        # job_params = {
+        #     "job_id": job_id,
+        #     "interval_slug": '24h',
+        #     "entity_info": {
+        #         "account_id": 129104112,
+        #         "entity_id": 236477687,
+        #         "entity_type": "device",
+        #         "details": {
+        #             "ipv4": "1.2.3.4"
+        #         },
+        #     },
+        #     "backend_url": self.backend_url,
+        #     "bot_token": self.bot_token,
+        # }
+        # yield job_id, intervals, NetFlowBot.perform_job, job_params
 
 
     # This method is called whenever the job needs to be done. It gets the parameters and performs fetching of data.
     @staticmethod
     def perform_job(*args, **job_params):
-        # {
-        #   "DST_AS": 0,
-        #   "SRC_AS": 0,
-        #   "IN_PKTS": 1,  # Incoming counter with length N x 8 bits for the number of packets associated with an IP Flow
-        #   "SRC_TOS": 0,
-        #   "DST_MASK": 0,
-        #   "IN_BYTES": 52,  # Incoming counter with length N x 8 bits for number of bytes associated with an IP Flow.
-        #   "PROTOCOL": 6,  # IP protocol
-        #   "SRC_MASK": 25,
-        #   "DIRECTION": 0,  # Flow direction: 0 - ingress flow, 1 - egress flow
-        #   "TCP_FLAGS": 20,
-        #   "INPUT_SNMP": 17,  # Input interface index
-        #   "L4_DST_PORT": 443,  # TCP/UDP destination port number
-        #   "L4_SRC_PORT": 36458,
-        #   "OUTPUT_SNMP": 3,  # Output interface index
-        #   "IPV4_DST_ADDR": "1.2.3.4",
-        #   "IPV4_NEXT_HOP": 1385497089,
-        #   "IPV4_SRC_ADDR": "4.3.2.1",
-        #   "LAST_SWITCHED": 2222830592,
-        #   "FIRST_SWITCHED": 2222830592,
-        #   "FLOW_SAMPLER_ID": 0,
-        #   "UNKNOWN_FIELD_TYPE": 0
-        # }
-        # https://www.cisco.com/en/US/technologies/tk648/tk362/technologies_white_paper09186a00800a3db9.html#wp9001622
+        # \d netflow_flows
+        #    Column        | Type     | Description
+        #   ---------------+----------+-------------
+        #    record        | integer  | // FK -> netflow_records.seq (PK)
+        #    in_bytes      | integer  | number of bytes associated with an IP Flow
+        #    protocol      | smallint | IP protocol (see lookup.py -> PROTOCOLS)
+        #    direction     | smallint | flow direction: 0 - ingress flow, 1 - egress flow
+        #    l4_dst_port   | integer  | destination port
+        #    l4_src_port   | integer  | source port
+        #    input_snmp    | smallint | input interface index
+        #    output_snmp   | smallint | output interface index
+        #    ipv4_src_addr | text     | source IP
+        #    ipv4_dst_addr | text     | destination IP
+        #   ---------------+----------+-------------
 
         job_id = job_params["job_id"]
+        interval_slug = job_params["interval_slug"]
+
+        entity_id = entity_ip = interface_index = None
+        entity_info = job_params.get("entity_info", None)
+        if entity_info is not None:
+            entity_id = entity_info["entity_id"]
+            entity_ip = entity_info["details"]["ipv4"]
+            interface_index = entity_info.get("interface_index", None)
+
+
+        last_used_seq, last_used_ts = _get_last_used_seq(job_id)
+        max_seq = _get_current_max_seq()
+        _save_current_max_seq(job_id, max_seq)
+
         values = []
-        entity_info = job_params["entity_info"]
-        minute_ago = datetime.now() - timedelta(minutes=1)
+        for direction in [DIRECTION_EGRESS, DIRECTION_INGRESS]:
+            values.extend(NetFlowBot.get_traffic_all_entities(interval_slug, last_used_seq, max_seq, direction=direction))
 
-        if job_id == '1min':
-            output_path_prefix = f'entity.{entity_info["entity_id"]}.netflow.traffic_in'
 
-            two_minutes_ago = minute_ago - timedelta(minutes=1)
+        # values.extend(NetFlowBot.get_traffic(interval_slug, last_used_seq, max_seq, direction=DIRECTION_EGRESS, entity=entity_id, entity_ip=entity_ip, interface=interface_index))
+        # values.extend(NetFlowBot.get_traffic(interval_slug, last_used_seq, max_seq, direction=DIRECTION_INGRESS, entity=entity_id, entity_ip=entity_ip, interface=interface_index))
 
-            # Traffic in and out: (per interface)
-            values.extend(NetFlowBot.get_values_traffic_in(output_path_prefix, two_minutes_ago, minute_ago))
-            values.extend(NetFlowBot.get_values_traffic_out(output_path_prefix, two_minutes_ago, minute_ago))
-            # output_path_prefix = f'entity.{entity_info["entity_id"]}.netflow'
-            values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=True))
-            values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=False))
-            values.extend(NetFlowBot.get_top_N_protocols(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=True))
-            values.extend(NetFlowBot.get_top_N_protocols(output_path_prefix, two_minutes_ago, minute_ago, 18, is_direction_in=False))
+        # values.extend(NetFlowBot.get_top_protocols(interval_slug, last_used_seq, max_seq, direction=DIRECTION_EGRESS, entity=entity_id, entity_ip=entity_ip, interface=interface_index, n=15))
+        # values.extend(NetFlowBot.get_top_protocols(interval_slug, last_used_seq, max_seq, direction=DIRECTION_INGRESS, entity=entity_id, entity_ip=entity_ip, interface=interface_index, n=15))
 
-        # every hour, collect stats for the whole hour:
-        elif job_id == '1h':
-            output_path_prefix_1hour = f'entity.{entity_info["entity_id"]}.netflow.traffic.in.1hour'
-            hour_ago = minute_ago - timedelta(hours=1)
-            values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix_1hour, hour_ago, minute_ago, 18, is_direction_in=True))
-            values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix_1hour, hour_ago, minute_ago, 18, is_direction_in=False))
+        # values.extend(NetFlowBot.get_top_IPs(interval_slug, last_used_seq, max_seq, direction=DIRECTION_EGRESS, entity=entity_id, entity_ip=entity_ip, interface=interface_index, n=15))
+        # values.extend(NetFlowBot.get_top_IPs(interval_slug, last_used_seq, max_seq, direction=DIRECTION_INGRESS, entity=entity_id, entity_ip=entity_ip, interface=interface_index, n=15))
 
-        # every 24h, also collect stats for the whole day:
-        elif job_id == '24h':
-            output_path_prefix_1day = f'entity.{entity_info["entity_id"]}.netflow.traffic.in.1day'
-            day_ago = minute_ago - timedelta(days=1)
-            values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix_1day, day_ago, minute_ago, 18, is_direction_in=True))
-            values.extend(NetFlowBot.get_top_N_IPs(output_path_prefix_1day, day_ago, minute_ago, 18, is_direction_in=False))
-            values.extend(NetFlowBot.get_top_N_protocols(output_path_prefix_1day, day_ago, minute_ago, 18, is_direction_in=True))
-            values.extend(NetFlowBot.get_top_N_protocols(output_path_prefix_1day, day_ago, minute_ago, 18, is_direction_in=False))
+
+        # protocol_str = 'TCP'
+        # ipv4_dst_addr = '1.2.3.4'
+        # ipv4_src_addr = '4.3.2.1'
+        # # traffic on all devices, all interfaces, per ingress / egress:
+        # f'netflow.{interval_slug}.egress'
+        # f'netflow.{interval_slug}.ingress'
+        # # traffic on all devices, all interfaces, per ingress / egress, for top X protocols:
+        # f'netflow.{interval_slug}.egress.protocol.{protocol_str}'
+        # f'netflow.{interval_slug}.ingress.protocol.{protocol_str}'
+        # # traffic on all devices, all interfaces, per ingress / egress, for top X ips:
+        # f'netflow.{interval_slug}.egress.ip.{ipv4_dst_addr}'
+        # f'netflow.{interval_slug}.ingress.ip.{ipv4_src_addr}'
+
+        # # traffic on all interfaces, per device, per ingress / egress:
+        # f'netflow.{interval_slug}.egress.entity.{entity_id}'
+        # f'netflow.{interval_slug}.ingress.entity.{entity_id}'
+        # # traffic on all interfaces, per device, per ingress / egress, for top X protocols:
+        # f'netflow.{interval_slug}.egress.entity.{entity_id}.protocol.{protocol_str}'
+        # f'netflow.{interval_slug}.ingress.entity.{entity_id}.protocol.{protocol_str}'
+        # # traffic on all interfaces, per device, per ingress / egress, for top X ips:
+        # f'netflow.{interval_slug}.egress.entity.{entity_id}.ip.{ipv4_dst_addr}'
+        # f'netflow.{interval_slug}.ingress.entity.{entity_id}.ip.{ipv4_src_addr}'
+
+        # # traffic per interface, per device, per ingress / egress:
+        # f'netflow.{interval_slug}.egress.entity.{entity_id}.if.{output_snmp}'
+        # f'netflow.{interval_slug}.ingress.entity.{entity_id}.if.{input_snmp}'
+        # # traffic per interface, per device, per ingress / egress, for top X protocols:
+        # f'netflow.{interval_slug}.egress.entity.{entity_id}.if.{output_snmp}.protocol.{protocol_str}'
+        # f'netflow.{interval_slug}.ingress.entity.{entity_id}.if.{input_snmp}.protocol.{protocol_str}'
+        # # traffic per interface, per device, per ingress / egress, for top X ips:
+        # f'netflow.{interval_slug}.egress.entity.{entity_id}.if.{output_snmp}.ip.{ipv4_dst_addr}'
+        # f'netflow.{interval_slug}.ingress.entity.{entity_id}.if.{input_snmp}.ip.{ipv4_src_addr}'
 
         if not values:
             log.warning("No values found to be sent to Grafolean")
@@ -170,7 +210,45 @@ class NetFlowBot(Collector):
         )
 
     @staticmethod
-    def get_values_traffic_in(output_path_prefix, from_time, to_time):
+    def construct_output_path_prefix(interval_slug, direction, entity, interface):
+        prefix = f"netflow.{interval_slug}.{'ingress' if direction == DIRECTION_INGRESS else 'egress'}"
+        if entity is None:
+            return prefix
+        prefix = f'{prefix}.entity.{entity}'
+        if interface is None:
+            return prefix
+        prefix = f'{prefix}.if.{interface}'
+        return prefix
+
+
+    @staticmethod
+    def get_traffic_all_entities(interval_slug, last_seq, max_seq, direction):
+        output_path = NetFlowBot.construct_output_path_prefix(interval_slug, direction, entity=None, interface=None)
+        with db.cursor() as c:
+            c.execute(f"""
+                SELECT
+                    sum(f.in_bytes)
+                FROM
+                    {DB_PREFIX}records "r",
+                    {DB_PREFIX}flows "f"
+                WHERE
+                    r.seq > %s AND
+                    r.ts <= %s AND
+                    r.seq = f.record AND
+                    f.direction = %s
+            """, (last_seq, max_seq, direction))
+            values = []
+            traffic_bytes, = c.fetchone()
+            values.append({
+                'p': output_path,
+                'v': traffic_bytes,  # Bps
+            })
+            return values
+
+
+    @staticmethod
+    def get_traffic(interval_slug, last_seq, max_seq, direction, entity=None, interface=None):
+        output_path = NetFlowBot.construct_output_path_prefix(interval_slug, direction, entity, interface)
         with db.cursor() as c:
             # TODO: missing check for IP: r.client_ip = %s AND
             c.execute(f"""
@@ -197,6 +275,7 @@ class NetFlowBot(Collector):
                     'v': traffic_bytes / 60.,  # Bps
                 })
             return values
+        return []
 
     @staticmethod
     def get_values_traffic_out(output_path_prefix, from_time, to_time):

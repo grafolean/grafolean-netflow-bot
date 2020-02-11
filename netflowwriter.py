@@ -44,6 +44,31 @@ def process_named_pipe(named_pipe_filename):
 
 
 def write_record(j):
+    # {
+    #   "DST_AS": 0,
+    #   "SRC_AS": 0,
+    #   "IN_PKTS": 1,  # Incoming counter with length N x 8 bits for the number of packets associated with an IP Flow
+    #   "SRC_TOS": 0,
+    #   "DST_MASK": 0,
+    #   "IN_BYTES": 52,  # Incoming counter with length N x 8 bits for number of bytes associated with an IP Flow.
+    #   "PROTOCOL": 6,  # IP protocol
+    #   "SRC_MASK": 25,
+    #   "DIRECTION": 0,  # Flow direction: 0 - ingress flow, 1 - egress flow
+    #   "TCP_FLAGS": 20,
+    #   "INPUT_SNMP": 17,  # Input interface index
+    #   "L4_SRC_PORT": 36458,  # TCP/UDP source port number
+    #   "L4_DST_PORT": 443,  # TCP/UDP destination port number
+    #   "OUTPUT_SNMP": 3,  # Output interface index
+    #   "IPV4_DST_ADDR": "1.2.3.4",
+    #   "IPV4_NEXT_HOP": 1385497089,
+    #   "IPV4_SRC_ADDR": "4.3.2.1",
+    #   "LAST_SWITCHED": 2222830592,
+    #   "FIRST_SWITCHED": 2222830592,
+    #   "FLOW_SAMPLER_ID": 0,
+    #   "UNKNOWN_FIELD_TYPE": 0
+    # }
+    # https://www.cisco.com/en/US/technologies/tk648/tk362/technologies_white_paper09186a00800a3db9.html#wp9001622
+
     with db.cursor() as c:
         # first save the flow record:
         ts = datetime.utcfromtimestamp(j['ts'])

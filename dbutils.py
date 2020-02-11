@@ -154,3 +154,7 @@ def migration_step_2():
                 IPV4_SRC_ADDR TEXT
             );
         """)
+
+def migration_step_3():
+    with db.cursor() as c:
+        c.execute(f'CREATE TABLE {DB_PREFIX}bot_jobs (job_id TEXT NOT NULL, last_used_seq BIGSERIAL DEFAULT NULL);')
