@@ -71,8 +71,8 @@ def write_record(j):
 
     with db.cursor() as c:
         # first save the flow record:
-        ts = datetime.utcfromtimestamp(j['ts'])
-        log.info(f"Received record [{j['seq']}]: {ts} from {j['client']}")
+        ts = j['ts']
+        log.info(f"Received record [{j['seq']}]: {datetime.utcfromtimestamp(ts)} from {j['client']}")
         c.execute(f"INSERT INTO {DB_PREFIX}records (ts, client_ip) VALUES (%s, %s) RETURNING seq;", (ts, j['client'],))
         record_db_seq = c.fetchone()[0]
 

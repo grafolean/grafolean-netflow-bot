@@ -3,11 +3,16 @@ import gzip
 import json
 import logging
 import os
+import socket
+import struct
 import sys
 import time
 from datetime import datetime
 
 from colors import color
+
+
+from lookup import DIRECTION_INGRESS
 
 
 # python-netflow-v9-softflowd expects main.py to be the main entrypoint, but we only need
@@ -40,9 +45,6 @@ def process_netflow(netflow_port, named_pipe_filename):
                     fp.write(line)
                     line = None
                 for ts, client, export in get_export_packets('0.0.0.0', NETFLOW_PORT):
-                    if export.header.version != 9:
-                        log.error(f"Only Netflow v9 currently supported, ignoring record (version: [{export.header.version}])")
-                        continue
 
                     client_ip, _ = client
 
@@ -55,22 +57,47 @@ def process_netflow(netflow_port, named_pipe_filename):
                     last_record_seqs[client_ip] = export.header.sequence
 
                     flows_data = [flow.data for flow in export.flows]
-                    entry = {
-                        "ts": ts,
-                        "client": client_ip,
-                        "seq": export.header.sequence,
-                        "flows": [{
-                            "IN_BYTES": data["IN_BYTES"],
-                            "PROTOCOL": data["PROTOCOL"],
-                            "DIRECTION": data["DIRECTION"],
-                            "INPUT_SNMP": data["INPUT_SNMP"],
-                            "L4_DST_PORT": data["L4_DST_PORT"],
-                            "L4_SRC_PORT": data["L4_SRC_PORT"],
-                            "OUTPUT_SNMP": data["OUTPUT_SNMP"],
-                            "IPV4_DST_ADDR": data["IPV4_DST_ADDR"],
-                            "IPV4_SRC_ADDR": data["IPV4_SRC_ADDR"],
-                        } for data in flows_data],
-                    }
+
+                    if export.header.version == 9:
+                        entry = {
+                            "ts": ts,
+                            "client": client_ip,
+                            "seq": export.header.sequence,
+                            "flows": [{
+                                "IN_BYTES": data["IN_BYTES"],
+                                "PROTOCOL": data["PROTOCOL"],
+                                "DIRECTION": data["DIRECTION"],
+                                "INPUT_SNMP": data["INPUT_SNMP"],
+                                "OUTPUT_SNMP": data["OUTPUT_SNMP"],
+                                "L4_DST_PORT": data["L4_DST_PORT"],
+                                "L4_SRC_PORT": data["L4_SRC_PORT"],
+                                "IPV4_DST_ADDR": data["IPV4_DST_ADDR"],
+                                "IPV4_SRC_ADDR": data["IPV4_SRC_ADDR"],
+                            } for data in flows_data],
+                        }
+                    elif export.header.version == 5:
+                        entry = {
+                            "ts": ts,
+                            "client": client_ip,
+                            "seq": export.header.sequence,
+                            "flows": [{
+                                "IN_BYTES": data["IN_OCTETS"],
+                                "PROTOCOL": data["PROTO"],
+                                "DIRECTION": DIRECTION_INGRESS,
+                                "INPUT_SNMP": data["INPUT"],
+                                "OUTPUT_SNMP": data["OUTPUT"],
+                                "L4_DST_PORT": data["DST_PORT"],
+                                "L4_SRC_PORT": data["SRC_PORT"],
+                                # netflow v5 IP addresses are decoded to integers, which is less suitable for us - pack
+                                # them back to bytes and transform them to strings:
+                                "IPV4_DST_ADDR": socket.inet_ntoa(struct.pack('!I', data["IPV4_DST_ADDR"])),
+                                "IPV4_SRC_ADDR": socket.inet_ntoa(struct.pack('!I', data["IPV4_SRC_ADDR"])),
+                            } for data in flows_data],
+                        }
+                    else:
+                        log.error(f"Only Netflow v5 and v9 currently supported, ignoring record (version: [{export.header.version}])")
+                        continue
+
                     line = json.dumps(entry).encode() + b'\n'
                     fp.write(line)
                     log.debug(f"Wrote seq [{export.header.sequence}] from client [{client_ip}], ts [{ts}], n flows: [{len(flows_data)}]")

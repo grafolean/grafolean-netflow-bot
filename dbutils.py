@@ -137,8 +137,7 @@ def migration_step_2():
     with db.cursor() as c:
         # UNLOGGED: Disabling WAL avoids high I/O load. Since NetFlow data is of temporary nature, this still
         # allows us to perform queries, but if the database crashes it is acceptable to lose all of the records.
-        c.execute(f'CREATE UNLOGGED TABLE {DB_PREFIX}records (seq BIGSERIAL NOT NULL PRIMARY KEY, ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, client_ip TEXT);')
-        c.execute(f'CREATE INDEX {DB_PREFIX}records_ts ON {DB_PREFIX}records (ts);')
+        c.execute(f'CREATE UNLOGGED TABLE {DB_PREFIX}records (seq BIGSERIAL NOT NULL PRIMARY KEY, ts NUMERIC(16,6) NOT NULL, client_ip TEXT);')
 
         c.execute(f"""
             CREATE UNLOGGED TABLE {DB_PREFIX}flows (
@@ -155,6 +154,5 @@ def migration_step_2():
             );
         """)
 
-def migration_step_3():
-    with db.cursor() as c:
-        c.execute(f'CREATE TABLE {DB_PREFIX}bot_jobs (job_id TEXT NOT NULL, last_used_seq BIGSERIAL DEFAULT NULL);')
+        c.execute(f'CREATE TABLE {DB_PREFIX}bot_jobs (job_id TEXT NOT NULL PRIMARY KEY, last_used_seq BIGSERIAL);')
+

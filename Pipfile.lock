@@ -47,11 +47,11 @@
         },
         "grafoleancollector": {
             "hashes": [
-                "sha256:024f5ca864a69d46e2a372a5591c63187123f7106ea0ce6d078cafecef3517b6",
-                "sha256:bd5b16ca84bc561e330efcf21e84192dfd27667c8e0a4405c866e61e6e460d6b"
+                "sha256:3f0aba6efc917016dcf605b1f0f7fc664ea1528618c4ea4b106db0c924a93e5c",
+                "sha256:9300ab10dbf6aee5b710745fa385d2b7dae4f4742800638d3c98c3beac5007c6"
             ],
             "index": "pypi",
-            "version": "==0.0.8"
+            "version": "==0.0.9"
         },
         "idna": {
             "hashes": [
