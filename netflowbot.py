@@ -102,7 +102,7 @@ class NetFlowBot(Collector):
 
         last_used_seq, last_used_ts = _get_last_used_seq(job_id)
         max_seq, max_ts = _get_current_max_seq()
-        if max_seq is None:
+        if max_seq is None or last_used_ts == max_ts:
             log.info(f"No netflow data found for job {job_id}, skipping.")
             return
 
