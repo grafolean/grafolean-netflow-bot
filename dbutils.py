@@ -29,6 +29,9 @@ register_adapter(dict, Json)
 @contextmanager
 def get_db_connection():
     global db_pool
+    if db_pool is None:
+        db_connect()
+
     try:
         conn = db_pool.getconn()
         conn.autocommit = True
@@ -71,8 +74,6 @@ def db_connect():
     except:
         db_pool = None
         log.error("DB connection failed")
-
-db_connect()
 
 # This class is only needed until we replace all db.cursor() calls with get_db_cursor()
 class ThinDBWrapper(object):
