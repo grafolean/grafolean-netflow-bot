@@ -13,7 +13,7 @@ import dotenv
 import requests
 
 from grafoleancollector import Collector, send_results_to_grafolean
-from dbutils import db, DB_PREFIX
+from dbutils import get_db_cursor, DB_PREFIX
 from lookup import PROTOCOLS, DIRECTION_INGRESS, DIRECTION_EGRESS
 
 logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
@@ -26,7 +26,7 @@ log = logging.getLogger("{}.{}".format(__name__, "base"))
 
 
 def _get_last_used_seq(job_id):
-    with db.cursor() as c:
+    with get_db_cursor() as c:
         c.execute(f'SELECT j.last_used_seq, r.ts FROM {DB_PREFIX}bot_jobs j, {DB_PREFIX}records r WHERE j.job_id = %s AND j.last_used_seq = r.seq;', (job_id,))
         rec = c.fetchone()
         if rec is None:
@@ -35,7 +35,7 @@ def _get_last_used_seq(job_id):
         return last_used_seq, ts
 
 def _get_current_max_seq():
-    with db.cursor() as c:
+    with get_db_cursor() as c:
         c.execute(f"SELECT seq, ts FROM {DB_PREFIX}records WHERE seq = (SELECT MAX(seq) FROM {DB_PREFIX}records);")
         rec = c.fetchone()
         if rec is None:
@@ -44,7 +44,7 @@ def _get_current_max_seq():
         return max_seq, now_ts
 
 def _save_current_max_seq(job_id, seq):
-    with db.cursor() as c:
+    with get_db_cursor() as c:
         c.execute(f"INSERT INTO {DB_PREFIX}bot_jobs (job_id, last_used_seq) VALUES (%s, %s) ON CONFLICT (job_id) DO UPDATE SET last_used_seq = %s;", (job_id, seq, seq))
 
 
@@ -178,7 +178,7 @@ class NetFlowBot(Collector):
     @staticmethod
     def get_traffic_for_entity(interval_label, last_seq, max_seq, time_between, direction, entity_id, entity_ip):
         # returns cumulative traffic for the whole entity, and traffic per interface for this entity
-        with db.cursor() as c:
+        with get_db_cursor() as c:
 
             c.execute(f"""
                 SELECT
@@ -218,7 +218,7 @@ class NetFlowBot(Collector):
     # @staticmethod
     # def get_traffic_all_entities(interval_label, last_seq, max_seq, direction):
     #     output_path = NetFlowBot.construct_output_path_prefix(interval_label, direction, entity_id=None, interface=None)
-    #     with db.cursor() as c:
+    #     with get_db_cursor() as c:
     #         c.execute(f"""
     #             SELECT
     #                 sum(f.in_bytes)
@@ -242,7 +242,7 @@ class NetFlowBot(Collector):
 
     # @staticmethod
     # def get_top_N_IPs(output_path_prefix, from_time, to_time, interface_index, is_direction_in=True):
-    #     with db.cursor() as c:
+    #     with get_db_cursor() as c:
     #         # TODO: missing check for IP: r.client_ip = %s AND
     #         c.execute(f"""
     #             SELECT
@@ -275,7 +275,7 @@ class NetFlowBot(Collector):
 
     # @staticmethod
     # def get_top_N_protocols(output_path_prefix, from_time, to_time, interface_index, is_direction_in=True):
-    #     with db.cursor() as c:
+    #     with get_db_cursor() as c:
     #         # TODO: missing check for IP: r.client_ip = %s AND
     #         c.execute(f"""
     #             SELECT

@@ -13,7 +13,7 @@ import psycopg2.extras
 from colors import color
 
 from lookup import PROTOCOLS
-from dbutils import migrate_if_needed, db, DB_PREFIX
+from dbutils import migrate_if_needed, get_db_cursor, DB_PREFIX
 
 
 logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
@@ -69,7 +69,7 @@ def write_record(j):
     # }
     # https://www.cisco.com/en/US/technologies/tk648/tk362/technologies_white_paper09186a00800a3db9.html#wp9001622
 
-    with db.cursor() as c:
+    with get_db_cursor() as c:
         # first save the flow record:
         ts = j['ts']
         log.info(f"Received record [{j['seq']}]: {datetime.utcfromtimestamp(ts)} from {j['client']}")

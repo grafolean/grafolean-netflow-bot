@@ -44,13 +44,13 @@ def get_db_connection():
 @contextmanager
 def get_db_cursor(commit=False):
     with get_db_connection() as connection:
-      cursor = connection.cursor()
-      try:
-          yield cursor
-          if commit:
-              connection.commit()
-      finally:
-          cursor.close()
+        cursor = connection.cursor()
+        try:
+            yield cursor
+            if commit:
+                connection.commit()
+        finally:
+            cursor.close()
 
 
 def db_connect():
@@ -75,13 +75,6 @@ def db_connect():
         db_pool = None
         log.error("DB connection failed")
 
-# This class is only needed until we replace all db.cursor() calls with get_db_cursor()
-class ThinDBWrapper(object):
-    @staticmethod
-    def cursor():
-        return get_db_cursor()
-db = ThinDBWrapper
-
 
 ###########################
 #   DB schema migration   #
@@ -89,7 +82,7 @@ db = ThinDBWrapper
 
 def get_existing_schema_version():
     existing_schema_version = 0
-    with db.cursor() as c:
+    with get_db_cursor() as c:
         try:
             c.execute(f'SELECT schema_version FROM {DB_PREFIX}runtime_data;')
             res = c.fetchone()
@@ -120,7 +113,7 @@ def migrate_if_needed():
         method_to_call = getattr(sys.modules[__name__], method_name)
         method_to_call()
         # automatically upgrade schema version if there is no exception:
-        with db.cursor() as c:
+        with get_db_cursor() as c:
             c.execute(f'UPDATE {DB_PREFIX}runtime_data SET schema_version = %s;', (try_migrating_to,))
         try_migrating_to += 1
     if try_migrating_to == existing_schema_version + 1:
@@ -130,12 +123,12 @@ def migrate_if_needed():
 
 
 def migration_step_1():
-    with db.cursor() as c:
+    with get_db_cursor() as c:
         c.execute(f'CREATE TABLE {DB_PREFIX}runtime_data (schema_version SMALLSERIAL NOT NULL);')
         c.execute(f'INSERT INTO {DB_PREFIX}runtime_data (schema_version) VALUES (1);')
 
 def migration_step_2():
-    with db.cursor() as c:
+    with get_db_cursor() as c:
         # UNLOGGED: Disabling WAL avoids high I/O load. Since NetFlow data is of temporary nature, this still
         # allows us to perform queries, but if the database crashes it is acceptable to lose all of the records.
         c.execute(f'CREATE UNLOGGED TABLE {DB_PREFIX}records (seq BIGSERIAL NOT NULL PRIMARY KEY, ts NUMERIC(16,6) NOT NULL, client_ip TEXT);')
