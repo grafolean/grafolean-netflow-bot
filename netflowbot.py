@@ -25,6 +25,15 @@ logging.addLevelName(logging.ERROR, color('ERR', bg='red'))
 log = logging.getLogger("{}.{}".format(__name__, "base"))
 
 
+NETFLOW_AGGREGATION_INTERVALS = [
+    ('1min', 60),
+    ('15min', 15 * 60),
+    ('1h', 3600),
+    ('4h', 4 * 3600),
+    ('24h', 24 * 3600),
+]
+
+
 def _get_last_used_seq(job_id):
     with get_db_cursor() as c:
         c.execute(f'SELECT j.last_used_seq, r.ts FROM {DB_PREFIX}bot_jobs j, {DB_PREFIX}records r WHERE j.job_id = %s AND j.last_used_seq = r.seq;', (job_id,))
@@ -48,36 +57,30 @@ def _save_current_max_seq(job_id, seq):
         c.execute(f"INSERT INTO {DB_PREFIX}bot_jobs (job_id, last_used_seq) VALUES (%s, %s) ON CONFLICT (job_id) DO UPDATE SET last_used_seq = %s;", (job_id, seq, seq))
 
 
-# def get_entities():
-#     requests.get()
-
 class NetFlowBot(Collector):
 
     def jobs(self):
+        # first merge together entity infos so that those entities from the same account are together:
+        accounts_infos = defaultdict(list)
         for entity_info in self.fetch_job_configs('netflow'):
-            # log.error(f'{repr(entity_info)}')
-            entity_id = entity_info['entity_id']
-            entity_ip = entity_info['details']['ipv4']
-            account_id = entity_info['account_id']
-            for sensor_info in entity_info["sensors"]:
-                sensor_id = sensor_info["sensor_id"]
-                interval = sensor_info["sensor_details"]["aggregation_interval_s"]
-                interval_label = sensor_info["sensor_details"]["interval_label"]
+            accounts_infos[entity_info["account_id"]].append(entity_info)
 
-                job_id = f'aggr/{interval_label}/{entity_id}/{sensor_id}'
+        for account_id, entities_infos in accounts_infos.items():
+            for interval_label, interval in NETFLOW_AGGREGATION_INTERVALS:
+                job_id = f'aggr/{interval_label}/{account_id}'
                 job_params = {
                     "job_id": job_id,
                     "interval_label": interval_label,
                     "account_id": account_id,
-                    "entity_id": entity_id,
-                    "entity_ip": entity_ip,
+                    "entities_infos": entities_infos,
                     "backend_url": self.backend_url,
                     "bot_token": self.bot_token,
                 }
-                yield job_id, [interval], NetFlowBot.perform_entity_aggr_job, job_params
+                yield job_id, [interval], NetFlowBot.perform_account_aggr_job, job_params
+
 
     @staticmethod
-    def perform_entity_aggr_job(*args, **job_params):
+    def perform_account_aggr_job(*args, **job_params):
         # \d netflow_flows
         #    Column        | Type     | Description
         #   ---------------+----------+-------------
@@ -95,27 +98,45 @@ class NetFlowBot(Collector):
 
         job_id = job_params["job_id"]
         interval_label = job_params["interval_label"]
-
         account_id = job_params["account_id"]
-        entity_id = job_params["entity_id"]
-        entity_ip = job_params["entity_ip"]
+        entities_infos = job_params["entities_infos"]
 
         last_used_seq, last_used_ts = _get_last_used_seq(job_id)
         max_seq, max_ts = _get_current_max_seq()
         if max_seq is None or last_used_ts == max_ts:
             log.info(f"No netflow data found for job {job_id}, skipping.")
             return
-
         _save_current_max_seq(job_id, max_seq)
-
         if last_used_seq is None:
             log.info(f"Counter was not yet initialized for job {job_id}, skipping.")
             return
+        time_between = float(max_ts - last_used_ts)
 
         values = []
-        time_between = float(max_ts - last_used_ts)
-        values.extend(NetFlowBot.get_traffic_for_entity(interval_label, last_used_seq, max_seq, time_between, DIRECTION_EGRESS, entity_id, entity_ip))
-        values.extend(NetFlowBot.get_traffic_for_entity(interval_label, last_used_seq, max_seq, time_between, DIRECTION_INGRESS, entity_id, entity_ip))
+        sum_traffic_egress = 0
+        sum_traffic_ingress = 0
+        for entity_info in entities_infos:
+            entity_id = entity_info["entity_id"]
+            entity_ip = entity_info["details"]["ipv4"]
+            v, s = NetFlowBot.get_traffic_for_entity(interval_label, last_used_seq, max_seq, time_between, DIRECTION_EGRESS, entity_id, entity_ip)
+            values.extend(v)
+            sum_traffic_egress += s
+            v, s = NetFlowBot.get_traffic_for_entity(interval_label, last_used_seq, max_seq, time_between, DIRECTION_INGRESS, entity_id, entity_ip)
+            values.extend(v)
+            sum_traffic_ingress += s
+
+        # add two values for cumulative sum for the whole account:
+        output_path = NetFlowBot.construct_output_path_prefix(interval_label, DIRECTION_EGRESS, entity_id=None, interface=None)
+        values.append({
+            'p': output_path,
+            'v': sum_traffic_egress / time_between,
+        })
+        output_path = NetFlowBot.construct_output_path_prefix(interval_label, DIRECTION_INGRESS, entity_id=None, interface=None)
+        values.append({
+            'p': output_path,
+            'v': sum_traffic_ingress / time_between,
+        })
+
 
         if not values:
             log.warning("No values found to be sent to Grafolean")
@@ -212,32 +233,7 @@ class NetFlowBot(Collector):
                 'p': output_path,
                 'v': sum_traffic / time_between,
             })
-            return values
-
-
-    # @staticmethod
-    # def get_traffic_all_entities(interval_label, last_seq, max_seq, direction):
-    #     output_path = NetFlowBot.construct_output_path_prefix(interval_label, direction, entity_id=None, interface=None)
-    #     with get_db_cursor() as c:
-    #         c.execute(f"""
-    #             SELECT
-    #                 sum(f.in_bytes)
-    #             FROM
-    #                 {DB_PREFIX}records "r",
-    #                 {DB_PREFIX}flows "f"
-    #             WHERE
-    #                 r.seq > %s AND
-    #                 r.ts <= %s AND
-    #                 r.seq = f.record AND
-    #                 f.direction = %s
-    #         """, (last_seq, max_seq, direction))
-    #         values = []
-    #         traffic_bytes, = c.fetchone()
-    #         values.append({
-    #             'p': output_path,
-    #             'v': traffic_bytes,  # Bps
-    #         })
-    #         return values
+            return values, sum_traffic
 
 
     # @staticmethod
