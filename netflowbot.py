@@ -32,6 +32,11 @@ NETFLOW_AGGREGATION_INTERVALS = [
     ('4h', 4 * 3600),
     ('24h', 24 * 3600),
 ]
+TOP_N_MAX = 10
+
+
+def path_part_encode(s):
+    return s.replace(".", '%2e')
 
 
 def _get_last_used_seq(job_id):
@@ -99,7 +104,8 @@ class NetFlowBot(Collector):
         job_id = job_params["job_id"]
         interval_label = job_params["interval_label"]
         account_id = job_params["account_id"]
-        entities_infos = job_params["entities_infos"]
+        entities = [(entity_info["entity_id"], entity_info["details"]["ipv4"],) for entity_info in job_params["entities_infos"]]
+
 
         last_used_seq, last_used_ts = _get_last_used_seq(job_id)
         max_seq, max_ts = _get_current_max_seq()
@@ -112,12 +118,11 @@ class NetFlowBot(Collector):
             return
         time_between = float(max_ts - last_used_ts)
 
+        # traffic:
         values = []
         sum_traffic_egress = 0
         sum_traffic_ingress = 0
-        for entity_info in entities_infos:
-            entity_id = entity_info["entity_id"]
-            entity_ip = entity_info["details"]["ipv4"]
+        for entity_id, entity_ip in entities:
             v, s = NetFlowBot.get_traffic_for_entity(interval_label, last_used_seq, max_seq, time_between, DIRECTION_EGRESS, entity_id, entity_ip)
             values.extend(v)
             sum_traffic_egress += s
@@ -125,7 +130,7 @@ class NetFlowBot(Collector):
             values.extend(v)
             sum_traffic_ingress += s
 
-        # add two values for cumulative sum for the whole account:
+        # cumulative sum for the whole account:
         output_path = NetFlowBot.construct_output_path_prefix(interval_label, DIRECTION_EGRESS, entity_id=None, interface=None)
         values.append({
             'p': output_path,
@@ -137,6 +142,12 @@ class NetFlowBot(Collector):
             'v': sum_traffic_ingress / time_between,
         })
 
+        # top N IPs:
+        for entity_id, entity_ip in entities:
+            v = NetFlowBot.get_top_N_IPs_for_entity_interfaces(interval_label, last_used_seq, max_seq, time_between, DIRECTION_EGRESS, entity_id, entity_ip)
+            values.extend(v)
+            v = NetFlowBot.get_top_N_IPs_for_entity_interfaces(interval_label, last_used_seq, max_seq, time_between, DIRECTION_INGRESS, entity_id, entity_ip)
+            values.extend(v)
 
         if not values:
             log.warning("No values found to be sent to Grafolean")
@@ -236,38 +247,56 @@ class NetFlowBot(Collector):
             return values, sum_traffic
 
 
-    # @staticmethod
-    # def get_top_N_IPs(output_path_prefix, from_time, to_time, interface_index, is_direction_in=True):
-    #     with get_db_cursor() as c:
-    #         # TODO: missing check for IP: r.client_ip = %s AND
-    #         c.execute(f"""
-    #             SELECT
-    #                 f.IPV4_{'SRC' if is_direction_in else 'DST'}_ADDR,
-    #                 sum(f.IN_BYTES) "traffic"
-    #             FROM
-    #                 netflow_records "r",
-    #                 netflow_flows "f"
-    #             WHERE
-    #                 r.ts >= %s AND
-    #                 r.ts < %s AND
-    #                 r.seq = f.record AND
-    #                 f.{'INPUT_SNMP' if is_direction_in else 'OUTPUT_SNMP'} = %s AND
-    #                 f.DIRECTION = {'0' if is_direction_in else '1'}
-    #             GROUP BY
-    #                 f.IPV4_{'SRC' if is_direction_in else 'DST'}_ADDR
-    #             ORDER BY
-    #                 traffic desc
-    #             LIMIT 10;
-    #         """, (from_time, to_time, interface_index,))
+    @staticmethod
+    def get_top_N_IPs_for_entity_interfaces(interval_label, last_seq, max_seq, time_between, direction, entity_id, entity_ip):
+        with get_db_cursor() as c, get_db_cursor() as c2:
 
-    #         values = []
-    #         for top_ip, traffic_bytes in c.fetchall():
-    #             output_path = f"{output_path_prefix}.topip.{'in' if is_direction_in else 'out'}.{interface_index}.if{interface_index}.{top_ip}"
-    #             values.append({
-    #                 'p': output_path,
-    #                 'v': traffic_bytes / 60.,  # Bps
-    #             })
-    #         return values
+            values = []
+            c.execute(f"""
+                SELECT
+                    distinct(f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'}) "interface_index"
+                FROM
+                    netflow_records "r",
+                    netflow_flows "f"
+                WHERE
+                    r.client_ip = %s AND
+                    r.seq > %s AND
+                    r.seq <= %s AND
+                    r.seq = f.record AND
+                    f.direction = %s
+            """, (entity_ip, last_seq, max_seq, direction,))
+
+            for interface_index, in c.fetchall():
+                c2.execute(f"""
+                    SELECT
+                        f.{'ipv4_src_addr' if direction == DIRECTION_INGRESS else 'ipv4_dst_addr'},
+                        sum(f.in_bytes) "traffic"
+                    FROM
+                        netflow_records "r",
+                        netflow_flows "f"
+                    WHERE
+                        r.client_ip = %s AND
+                        r.seq > %s AND
+                        r.seq <= %s AND
+                        r.seq = f.record AND
+                        f.direction = %s AND
+                        f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'} = %s
+                    GROUP BY
+                        f.{'ipv4_src_addr' if direction == DIRECTION_INGRESS else 'ipv4_dst_addr'}
+                    ORDER BY
+                        traffic desc
+                    LIMIT {TOP_N_MAX};
+                """, (entity_ip, last_seq, max_seq, direction, interface_index,))
+
+                output_path_interface = NetFlowBot.construct_output_path_prefix(interval_label, direction, entity_id, interface=interface_index)
+                for top_ip, traffic_bytes in c2.fetchall():
+                    output_path = f"{output_path_interface}.topip.{path_part_encode(top_ip)}"
+                    values.append({
+                        'p': output_path,
+                        'v': traffic_bytes / time_between,  # Bps
+                    })
+
+            return values
 
     # @staticmethod
     # def get_top_N_protocols(output_path_prefix, from_time, to_time, interface_index, is_direction_in=True):
