@@ -147,6 +147,10 @@ def migration_step_2():
                 IPV4_SRC_ADDR TEXT
             );
         """)
+        c.execute(f'CREATE INDEX netflow_flows_record on netflow_flows (record);')
 
         c.execute(f'CREATE TABLE {DB_PREFIX}bot_jobs (job_id TEXT NOT NULL PRIMARY KEY, last_used_seq BIGSERIAL);')
 
+        # slow db queries should be logged to help avoid performance problems:
+        database_name = os.environ.get('DB_DATABASE', 'grafolean')
+        c.execute(f'ALTER DATABASE %s SET log_min_duration_statement = 100;', (database_name,))
