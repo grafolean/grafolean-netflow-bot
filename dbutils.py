@@ -11,13 +11,14 @@ from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT, register_adapter
 from psycopg2.extras import Json
 
-logging.basicConfig(format='%(asctime)s | %(levelname)s | %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S', level=logging.DEBUG)
+IS_DEBUG = os.environ.get('DEBUG', 'false') in ['true', 'yes', '1']
+logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S', level=logging.DEBUG if IS_DEBUG else logging.INFO)
 logging.addLevelName(logging.DEBUG, color("DBG", 7))
 logging.addLevelName(logging.INFO, "INF")
 logging.addLevelName(logging.WARNING, color('WRN', fg='red'))
 logging.addLevelName(logging.ERROR, color('ERR', bg='red'))
-log = logging.getLogger("{}.{}".format(__name__, "base"))
+log = logging.getLogger("{}.{}".format(__name__, "dbutils"))
 
 
 db_pool = None

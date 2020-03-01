@@ -16,13 +16,14 @@ from lookup import PROTOCOLS
 from dbutils import migrate_if_needed, get_db_cursor, DB_PREFIX
 
 
+IS_DEBUG = os.environ.get('DEBUG', 'false') in ['true', 'yes', '1']
 logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S', level=logging.DEBUG)
+                    datefmt='%Y-%m-%d %H:%M:%S', level=logging.DEBUG if IS_DEBUG else logging.INFO)
 logging.addLevelName(logging.DEBUG, color("DBG", 7))
 logging.addLevelName(logging.INFO, "INF")
 logging.addLevelName(logging.WARNING, color('WRN', fg='red'))
 logging.addLevelName(logging.ERROR, color('ERR', bg='red'))
-log = logging.getLogger("{}.{}".format(__name__, "base"))
+log = logging.getLogger("{}.{}".format(__name__, "writer"))
 
 
 def process_named_pipe(named_pipe_filename):
@@ -40,7 +41,10 @@ def process_named_pipe(named_pipe_filename):
                     log.info("Named pipe closed")
                     break
 
-                write_record(json.loads(line))
+                try:
+                    write_record(json.loads(line))
+                except Exception as ex:
+                    log.exception("Error writing line, skipping...")
 
 
 def write_record(j):
@@ -72,7 +76,7 @@ def write_record(j):
     with get_db_cursor() as c:
         # first save the flow record:
         ts = j['ts']
-        log.info(f"Received record [{j['seq']}]: {datetime.utcfromtimestamp(ts)} from {j['client']}")
+        log.debug(f"Received record [{j['seq']}]: {datetime.utcfromtimestamp(ts)} from {j['client']}")
         c.execute(f"INSERT INTO {DB_PREFIX}records (ts, client_ip) VALUES (%s, %s) RETURNING seq;", (ts, j['client'],))
         record_db_seq = c.fetchone()[0]
 

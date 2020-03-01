@@ -22,7 +22,7 @@ logging.addLevelName(logging.DEBUG, color("DBG", 7))
 logging.addLevelName(logging.INFO, "INF")
 logging.addLevelName(logging.WARNING, color('WRN', fg='red'))
 logging.addLevelName(logging.ERROR, color('ERR', bg='red'))
-log = logging.getLogger("{}.{}".format(__name__, "base"))
+log = logging.getLogger("{}.{}".format(__name__, "bot"))
 
 
 NETFLOW_AGGREGATION_INTERVALS = [

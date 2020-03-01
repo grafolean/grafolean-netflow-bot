@@ -22,14 +22,14 @@ from pynetflow.main import get_export_packets
 # disable DEBUG logging on NetFlow collector library:
 logging.getLogger('pynetflow.main').setLevel(logging.INFO)
 
-
+IS_DEBUG = os.environ.get('DEBUG', 'false') in ['true', 'yes', '1']
 logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S', level=logging.DEBUG)
+                    datefmt='%Y-%m-%d %H:%M:%S', level=logging.DEBUG if IS_DEBUG else logging.INFO)
 logging.addLevelName(logging.DEBUG, color("DBG", 7))
 logging.addLevelName(logging.INFO, "INF")
 logging.addLevelName(logging.WARNING, color('WRN', fg='red'))
 logging.addLevelName(logging.ERROR, color('ERR', bg='red'))
-log = logging.getLogger("{}.{}".format(__name__, "base"))
+log = logging.getLogger("{}.{}".format(__name__, "collector"))
 
 
 def process_netflow(netflow_port, named_pipe_filename):
