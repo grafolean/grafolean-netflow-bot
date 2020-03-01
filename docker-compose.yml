@@ -13,6 +13,9 @@ services:
     #   image: grafolean/grafolean-netflow-bot:v1.0.0
     image: grafolean/grafolean-netflow-bot
     container_name: grafolean-netflow-bot
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       # Backend url must be set to the address of the Grafolean backend, for example this uses Grafolean hosted service:
       # - BACKEND_URL=https://grafolean.com/api
@@ -23,55 +26,116 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       # Interval between fetching information about jobs:
       - JOBS_REFRESH_INTERVAL=${JOBS_REFRESH_INTERVAL:-60}
-      - REDIS_HOST=redis
+      - DB_HOST=db
+      - DB_DATABASE=${DB_NAME:-grafolean}
+      - DB_USERNAME=${DB_USER:-admin}
+      - DB_PASSWORD=${DB_PASS:-admin}
     restart: always
     networks:
       - grafolean
 
 
-  redis:
-    image: redis:5-alpine
-    container_name: grafolean-netflow-bot-redis
+  db:
+    image: postgres:12.1-alpine
+    container_name: grafolean-netflow-db
+    volumes:
+      # You should always save DB data to a host directory unless you are prepared to lose it. By default
+      # this the location of data is '/grafolean/db/'.
+      # Note that if you ever wish to copy this directory as backup, you need to stop grafolean
+      # container first. For alternative backup approaches consult PostgreSQL documentation.
+      - ${DB_DIR:-/grafolean/netflow-db/}:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_DB=${DB_NAME:-grafolean}
+      - POSTGRES_USER=${DB_USER:-admin}
+      - POSTGRES_PASSWORD=${DB_PASS:-admin}
+
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h db -t 1 -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     networks:
       - grafolean
 
 
   netflowcollector:
-    # This process collects NetFlow data:
+    # This process collects NetFlow data and writes it to a shared named pipe. The
+    # reason is that there is a Docker bug which causes UDP packets to change the source
+    # IP if processed within the Docker network. To avoid that, we have a collector
+    # listening on host network interface, then transferring the JSON-encoded data
+    # to a "writer" process within the network, which writes the data to DB.
     image: grafolean/grafolean-netflow-bot
     container_name: grafolean-netflow-collector
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
-      - REDIS_HOST=redis
+      - NAMED_PIPE_FILENAME=/shared-grafolean/netflow.pipe
       - NETFLOW_PORT=2055
     ports:
       - "${NETFLOW_PORT:-2055}:2055/udp"
+    restart: always
+    # NetFlow collector uses the same docker image as bot (grafolean/grafolean-netflow-bot),
+    # but specifies a different entrypoint:
+    entrypoint:
+      - python
+      - -m
+      - netflowcollector
+    volumes:
+      - shared-grafolean:/shared-grafolean
+    network_mode: "host"
+
+
+  netflowwriter:
+    # Reads netflow data from named pipe and writes it to DB.
+    image: grafolean/grafolean-netflow-bot
+    container_name: grafolean-netflow-writer
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - NAMED_PIPE_FILENAME=/shared-grafolean/netflow.pipe
+      - DB_HOST=db
+      - DB_DATABASE=${DB_NAME:-grafolean}
+      - DB_USERNAME=${DB_USER:-admin}
+      - DB_PASSWORD=${DB_PASS:-admin}
     restart: always
     # CAREFUL: NetFlow collector uses the same docker image as bot
     # (grafolean/grafolean-netflow-bot), but specifies a different entrypoint:
     entrypoint:
       - python
       - -m
-      - netflowcollector
-    networks:
-      - grafolean
-
-
-  autoheal:
-    # This container automatically restarts any container that fails its health check. Not a bullet-proof solution, but better than nothing.
-    image: willfarrell/autoheal
-    container_name: grafolean-netflow-bot-autoheal
-    environment:
-      - AUTOHEAL_CONTAINER_LABEL=all
+      - netflowwriter
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    restart: always
+      - shared-grafolean:/shared-grafolean
+    # To use py-spy:
+    #   - $ docker exec -ti grafolean-netflow-writer bash
+    #   - # pip install py-spy
+    #   - # py-spy record -n -o /tmp/prof/out.svg --pid 1
+    # But first, these 3 lines below must be enabled, to add a volume and capabilities: (careful not to add spaces!)
+    #  - /tmp/prof/:/tmp/prof/
+    #cap_add:
+    #  - SYS_PTRACE
     networks:
       - grafolean
 
 
-# If running on the same host, join the Grafolean network, so we can reach Grafolean
-# backend at address grafolean:80.
+#  autoheal:
+#    # This container automatically restarts any container that fails its health check. Not a bullet-proof solution, but better than nothing.
+#    image: willfarrell/autoheal
+#    container_name: grafolean-netflow-bot-autoheal
+#    environment:
+#      - AUTOHEAL_CONTAINER_LABEL=all
+#    volumes:
+#      - /var/run/docker.sock:/var/run/docker.sock
+#    restart: always
+#    networks:
+#      - grafolean
+
+
 networks:
   grafolean:
-    name: grafolean
+
+volumes:
+  shared-grafolean:
