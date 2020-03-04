@@ -8,6 +8,10 @@ services:
   # the settings appropriately.
   #
 
+  # To run a NetFlow v5 simulator, use:
+  #  $ docker run --net=host --name nflow networkstatic/nflow-generator -t 127.0.0.1 -p 2055
+  # (replace the port appropriately)
+
   netflowbot:
     # If you wish to load an explicit version, change the next line. For example:
     #   image: grafolean/grafolean-netflow-bot:v1.0.0

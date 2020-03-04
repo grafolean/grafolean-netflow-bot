@@ -85,15 +85,16 @@ def write_record(j):
             for flow in flows:
                 yield (
                     record_db_seq,
-                    flow.get('IN_BYTES'),
-                    flow.get('PROTOCOL'),
-                    flow.get('DIRECTION'),
-                    flow.get('L4_DST_PORT'),
-                    flow.get('L4_SRC_PORT'),
-                    flow.get('INPUT_SNMP'),
-                    flow.get('OUTPUT_SNMP'),
-                    flow.get('IPV4_DST_ADDR'),
-                    flow.get('IPV4_SRC_ADDR'),
+                    *flow,
+                    # flow.get('IN_BYTES'),
+                    # flow.get('PROTOCOL'),
+                    # flow.get('DIRECTION'),
+                    # flow.get('L4_DST_PORT'),
+                    # flow.get('L4_SRC_PORT'),
+                    # flow.get('INPUT_SNMP'),
+                    # flow.get('OUTPUT_SNMP'),
+                    # flow.get('IPV4_DST_ADDR'),
+                    # flow.get('IPV4_SRC_ADDR'),
                 )
         data_iterator = _get_data(record_db_seq, j['flows'])
         psycopg2.extras.execute_values(
