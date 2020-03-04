@@ -63,36 +63,54 @@ def process_netflow(netflow_port, named_pipe_filename):
                             "ts": ts,
                             "client": client_ip,
                             "seq": export.header.sequence,
-                            "flows": [{
-                                "IN_BYTES": data["IN_BYTES"],
-                                "PROTOCOL": data["PROTOCOL"],
-                                "DIRECTION": data["DIRECTION"],
-                                "INPUT_SNMP": data["INPUT_SNMP"],
-                                "OUTPUT_SNMP": data["OUTPUT_SNMP"],
-                                "L4_DST_PORT": data["L4_DST_PORT"],
-                                "L4_SRC_PORT": data["L4_SRC_PORT"],
-                                "IPV4_DST_ADDR": data["IPV4_DST_ADDR"],
-                                "IPV4_SRC_ADDR": data["IPV4_SRC_ADDR"],
-                            } for data in flows_data],
+                            "flows": [[
+                                # "IN_BYTES":
+                                data["IN_BYTES"],
+                                # "PROTOCOL":
+                                data["PROTOCOL"],
+                                # "DIRECTION":
+                                data["DIRECTION"],
+                                # "L4_DST_PORT":
+                                data["L4_DST_PORT"],
+                                # "L4_SRC_PORT":
+                                data["L4_SRC_PORT"],
+                                # "INPUT_SNMP":
+                                data["INPUT_SNMP"],
+                                # "OUTPUT_SNMP":
+                                data["OUTPUT_SNMP"],
+                                # "IPV4_DST_ADDR":
+                                data["IPV4_DST_ADDR"],
+                                # "IPV4_SRC_ADDR":
+                                data["IPV4_SRC_ADDR"],
+                             ] for data in flows_data],
                         }
                     elif export.header.version == 5:
                         entry = {
                             "ts": ts,
                             "client": client_ip,
                             "seq": export.header.sequence,
-                            "flows": [{
-                                "IN_BYTES": data["IN_OCTETS"],
-                                "PROTOCOL": data["PROTO"],
-                                "DIRECTION": DIRECTION_INGRESS,
-                                "INPUT_SNMP": data["INPUT"],
-                                "OUTPUT_SNMP": data["OUTPUT"],
-                                "L4_DST_PORT": data["DST_PORT"],
-                                "L4_SRC_PORT": data["SRC_PORT"],
+                            "flows": [[
+                                # "IN_BYTES":
+                                data["IN_OCTETS"],
+                                # "PROTOCOL":
+                                data["PROTO"],
+                                # "DIRECTION":
+                                DIRECTION_INGRESS,
+                                # "L4_DST_PORT":
+                                data["DST_PORT"],
+                                # "L4_SRC_PORT":
+                                data["SRC_PORT"],
+                                # "INPUT_SNMP":
+                                data["INPUT"],
+                                # "OUTPUT_SNMP":
+                                data["OUTPUT"],
                                 # netflow v5 IP addresses are decoded to integers, which is less suitable for us - pack
                                 # them back to bytes and transform them to strings:
-                                "IPV4_DST_ADDR": socket.inet_ntoa(struct.pack('!I', data["IPV4_DST_ADDR"])),
-                                "IPV4_SRC_ADDR": socket.inet_ntoa(struct.pack('!I', data["IPV4_SRC_ADDR"])),
-                            } for data in flows_data],
+                                # "IPV4_DST_ADDR":
+                                socket.inet_ntoa(struct.pack('!I', data["IPV4_DST_ADDR"])),
+                                # "IPV4_SRC_ADDR":
+                                socket.inet_ntoa(struct.pack('!I', data["IPV4_SRC_ADDR"])),
+                            ] for data in flows_data],
                         }
                     else:
                         log.error(f"Only Netflow v5 and v9 currently supported, ignoring record (version: [{export.header.version}])")
