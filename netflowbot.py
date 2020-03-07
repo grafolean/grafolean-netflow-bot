@@ -116,7 +116,8 @@ class NetFlowBot(Collector):
         if last_used_seq is None:
             log.info(f"Counter was not yet initialized for job {job_id}, skipping.")
             return
-        time_between = float(max_ts - last_used_ts)
+        #time_between = float(max_ts - last_used_ts)
+        time_between = 1  # we want to use bytes as unit, not bytes per second
 
         # traffic:
         values = []
