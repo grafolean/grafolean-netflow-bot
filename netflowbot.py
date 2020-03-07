@@ -163,39 +163,6 @@ class NetFlowBot(Collector):
             values,
         )
 
-        # protocol_str = 'TCP'
-        # ipv4_dst_addr = '1.2.3.4'
-        # ipv4_src_addr = '4.3.2.1'
-        # # traffic on all devices, all interfaces, per ingress / egress:
-        # f'netflow.{interval_label}.egress'
-        # f'netflow.{interval_label}.ingress'
-        # # traffic on all devices, all interfaces, per ingress / egress, for top X protocols:
-        # f'netflow.{interval_label}.egress.protocol.{protocol_str}'
-        # f'netflow.{interval_label}.ingress.protocol.{protocol_str}'
-        # # traffic on all devices, all interfaces, per ingress / egress, for top X ips:
-        # f'netflow.{interval_label}.egress.ip.{ipv4_dst_addr}'
-        # f'netflow.{interval_label}.ingress.ip.{ipv4_src_addr}'
-
-        # # traffic on all interfaces, per device, per ingress / egress:
-        # f'netflow.{interval_label}.egress.entity.{entity_id}'
-        # f'netflow.{interval_label}.ingress.entity.{entity_id}'
-        # # traffic on all interfaces, per device, per ingress / egress, for top X protocols:
-        # f'netflow.{interval_label}.egress.entity.{entity_id}.protocol.{protocol_str}'
-        # f'netflow.{interval_label}.ingress.entity.{entity_id}.protocol.{protocol_str}'
-        # # traffic on all interfaces, per device, per ingress / egress, for top X ips:
-        # f'netflow.{interval_label}.egress.entity.{entity_id}.ip.{ipv4_dst_addr}'
-        # f'netflow.{interval_label}.ingress.entity.{entity_id}.ip.{ipv4_src_addr}'
-
-        # # traffic per interface, per device, per ingress / egress:
-        # f'netflow.{interval_label}.egress.entity.{entity_id}.if.{output_snmp}'
-        # f'netflow.{interval_label}.ingress.entity.{entity_id}.if.{input_snmp}'
-        # # traffic per interface, per device, per ingress / egress, for top X protocols:
-        # f'netflow.{interval_label}.egress.entity.{entity_id}.if.{output_snmp}.protocol.{protocol_str}'
-        # f'netflow.{interval_label}.ingress.entity.{entity_id}.if.{input_snmp}.protocol.{protocol_str}'
-        # # traffic per interface, per device, per ingress / egress, for top X ips:
-        # f'netflow.{interval_label}.egress.entity.{entity_id}.if.{output_snmp}.ip.{ipv4_dst_addr}'
-        # f'netflow.{interval_label}.ingress.entity.{entity_id}.if.{input_snmp}.ip.{ipv4_src_addr}'
-
 
     @staticmethod
     def construct_output_path_prefix(interval_label, direction, entity_id, interface):
