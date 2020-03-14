@@ -47,11 +47,11 @@
         },
         "grafoleancollector": {
             "hashes": [
-                "sha256:3f0aba6efc917016dcf605b1f0f7fc664ea1528618c4ea4b106db0c924a93e5c",
-                "sha256:9300ab10dbf6aee5b710745fa385d2b7dae4f4742800638d3c98c3beac5007c6"
+                "sha256:8a3024af85e2693809ac29b0f248d6b177d196318d1131aee85065d9fdb0faf8",
+                "sha256:e7321e06462c7d219d270c15120ad236482773967bd2ad22ef08da7c3ef172c2"
             ],
             "index": "pypi",
-            "version": "==0.0.9"
+            "version": "==0.0.10"
         },
         "idna": {
             "hashes": [
@@ -100,11 +100,11 @@
         },
         "python-dotenv": {
             "hashes": [
-                "sha256:8429f459fc041237d98c9ff32e1938e7e5535b5ff24388876315a098027c3a57",
-                "sha256:ca9f3debf2262170d6f46571ce4d6ca1add60bb93b69c3a29dcb3d1a00a65c93"
+                "sha256:81822227f771e0cab235a2939f0f265954ac4763cafd806d845801c863bf372f",
+                "sha256:92b3123fb2d58a284f76cc92bfe4ee6c502c32ded73e8b051c4f6afc8b6751ed"
             ],
             "index": "pypi",
-            "version": "==0.11.0"
+            "version": "==0.12.0"
         },
         "pytz": {
             "hashes": [

@@ -26,11 +26,12 @@ log = logging.getLogger("{}.{}".format(__name__, "bot"))
 
 
 NETFLOW_AGGREGATION_INTERVALS = [
-    ('1min', 60),
-    ('15min', 15 * 60),
-    ('1h', 3600),
-    ('4h', 4 * 3600),
-    ('24h', 24 * 3600),
+    # label; interval; when to start first run (to make sure the runs are not aligned)
+    ('1min', 60, 0),
+    ('15min', 15 * 60, 15),
+    ('1h', 3600, 4*60 + 15),
+    ('4h', 4 * 3600, 29*60 + 15),
+    ('24h', 24 * 3600, 1*3600 + 29*60 + 15),
 ]
 TOP_N_MAX = 10
 
@@ -71,7 +72,7 @@ class NetFlowBot(Collector):
             accounts_infos[entity_info["account_id"]].append(entity_info)
 
         for account_id, entities_infos in accounts_infos.items():
-            for interval_label, interval in NETFLOW_AGGREGATION_INTERVALS:
+            for interval_label, interval, first_run_ts in NETFLOW_AGGREGATION_INTERVALS:
                 job_id = f'aggr/{interval_label}/{account_id}'
                 job_params = {
                     "job_id": job_id,
@@ -81,7 +82,8 @@ class NetFlowBot(Collector):
                     "backend_url": self.backend_url,
                     "bot_token": self.bot_token,
                 }
-                yield job_id, [interval], NetFlowBot.perform_account_aggr_job, job_params
+                start_ts = int(time.time()) + first_run_ts - interval  # start_ts must be in the past
+                yield job_id, [interval], NetFlowBot.perform_account_aggr_job, job_params, start_ts
 
 
     @staticmethod
