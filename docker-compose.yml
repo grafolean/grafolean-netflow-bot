@@ -4,8 +4,7 @@ services:
   #
   # Welcome to Grafolean NetFlow bot!
   #
-  # This file should be modified to suit your running environment. Please check the comments and change
-  # the settings appropriately.
+  # To modify the variables in this file, please use .evn file (use .env.example as a starting point.)
   #
 
   # To run a NetFlow v5 simulator, use:
