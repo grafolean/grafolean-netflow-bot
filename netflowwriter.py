@@ -52,7 +52,8 @@ def process_named_pipe(named_pipe_filename):
             log.info(f"Opened named pipe {named_pipe_filename}")
             for line in fp:
                 if len(line) == 0:
-                    log.info("Named pipe closed")
+                    log.warning("Named pipe closed")
+                    time.sleep(0.1)
                     break
 
                 try:
