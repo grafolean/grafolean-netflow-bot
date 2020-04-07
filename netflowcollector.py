@@ -26,7 +26,7 @@ log = logging.getLogger("{}.{}".format(__name__, "collector"))
 def pass_netflow_data(netflow_port, named_pipe_filename):
     # endless loop - read netflow packets from UDP port and write them to named pipe:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_address = ('localhost', netflow_port,)
+    server_address = ('', netflow_port,)  # '' binds to any IPv4 address (not IPv6!)
     log.debug('starting up on {} port {}'.format(*server_address))
     sock.bind(server_address)
 
