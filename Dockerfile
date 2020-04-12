@@ -9,6 +9,7 @@ FROM python:3.6-slim-stretch as build-backend
 COPY ./ /netflowbot/
 WORKDIR /netflowbot
 RUN \
+    ls pynetflow/netflow/__init__.py || (echo "Make sure you run 'git submodule update --init --recursive'!" && exit 1) && \
     rm -rf .git/ tests/ .vscode/ .pytest_cache/ __pycache__/ && \
     find ./ ! -name '*.py' -type f -exec rm '{}' ';' && \
     python3.6 -m compileall -b ./ && \
