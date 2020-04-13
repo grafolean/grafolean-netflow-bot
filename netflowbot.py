@@ -36,6 +36,18 @@ NETFLOW_AGGREGATION_INTERVALS = [
 TOP_N_MAX = 10
 
 
+# Decorator: to avoid overwhelming the system, we sleep some amount after performing
+# demanding tasks. For how long? Some factor of the timed interval.
+def slow_down(func):
+    def wrapper(*args, **kwargs):
+        start = time.time()
+        ret = func(*args, **kwargs)
+        end = time.time()
+        time.sleep((end - start) * 0.5)
+        return ret
+    return wrapper
+
+
 def path_part_encode(s):
     return s.replace(".", '%2e')
 
@@ -107,7 +119,7 @@ class NetFlowBot(Collector):
         interval_label = job_params["interval_label"]
         account_id = job_params["account_id"]
         entities = [(entity_info["entity_id"], entity_info["details"]["ipv4"],) for entity_info in job_params["entities_infos"]]
-
+        log.info(f"Starting {interval_label} aggregation job for account {account_id}...")
 
         last_used_seq, last_used_ts = _get_last_used_seq(job_id)
         max_seq, max_ts = _get_current_max_seq()
@@ -179,6 +191,7 @@ class NetFlowBot(Collector):
 
 
     @staticmethod
+    @slow_down
     def get_traffic_for_entity(interval_label, last_seq, max_seq, time_between, direction, entity_id, entity_ip):
         # returns cumulative traffic for the whole entity, and traffic per interface for this entity
         with get_db_cursor() as c:
@@ -219,6 +232,7 @@ class NetFlowBot(Collector):
 
 
     @staticmethod
+    @slow_down
     def get_top_N_IPs_for_entity_interfaces(interval_label, last_seq, max_seq, time_between, direction, entity_id, entity_ip):
         with get_db_cursor() as c, get_db_cursor() as c2:
 
@@ -270,6 +284,7 @@ class NetFlowBot(Collector):
             return values
 
     @staticmethod
+    @slow_down
     def get_top_N_IPs_for_entity(interval_label, last_seq, max_seq, time_between, direction, entity_id, entity_ip):
         with get_db_cursor() as c:
             values = []
@@ -305,6 +320,7 @@ class NetFlowBot(Collector):
 
 
     @staticmethod
+    @slow_down
     def get_top_N_protocols_for_entity_interfaces(interval_label, last_seq, max_seq, time_between, direction, entity_id, entity_ip):
         with get_db_cursor() as c, get_db_cursor() as c2:
 
@@ -356,6 +372,7 @@ class NetFlowBot(Collector):
             return values
 
     @staticmethod
+    @slow_down
     def get_top_N_protocols_for_entity(interval_label, last_seq, max_seq, time_between, direction, entity_id, entity_ip):
         with get_db_cursor() as c:
             values = []
@@ -390,6 +407,7 @@ class NetFlowBot(Collector):
             return values
 
     # @staticmethod
+    # @slow_down
     # def get_top_N_protocols(output_path_prefix, from_time, to_time, interface_index, is_direction_in=True):
     #     with get_db_cursor() as c:
     #         # TODO: missing check for IP: r.client_ip = %s AND
