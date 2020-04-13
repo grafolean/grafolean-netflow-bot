@@ -130,24 +130,23 @@ def migration_step_1():
 
 def migration_step_2():
     with get_db_cursor() as c:
-        # UNLOGGED: Disabling WAL avoids high I/O load. Since NetFlow data is of temporary nature, this still
-        # allows us to perform queries, but if the database crashes it is acceptable to lose all of the records.
-        c.execute(f'CREATE UNLOGGED TABLE {DB_PREFIX}records (seq BIGSERIAL NOT NULL PRIMARY KEY, ts NUMERIC(16,6) NOT NULL, client_ip TEXT);')
-
+        # UNLOGGED: Disabling WAL avoids high I/O load. Since NetFlow data is of temporary nature, this is acceptable.
+        # It still allows us to perform queries, but if the database crashes we lose the raw records.
         c.execute(f"""
             CREATE UNLOGGED TABLE {DB_PREFIX}flows (
-                record INTEGER NOT NULL REFERENCES {DB_PREFIX}records(seq) ON DELETE CASCADE,
-                IN_BYTES INTEGER,
-                PROTOCOL SMALLINT,
-                DIRECTION SMALLINT,
-                L4_DST_PORT INTEGER,
-                L4_SRC_PORT INTEGER,
-                INPUT_SNMP SMALLINT,
-                OUTPUT_SNMP SMALLINT,
-                IPV4_DST_ADDR TEXT,
-                IPV4_SRC_ADDR TEXT
+                ts NUMERIC(16,6) NOT NULL,
+                entity_ip INET NOT NULL,
+                in_bytes INTEGER NOT NULL,
+                protocol SMALLINT NOT NULL,
+                direction SMALLINT NOT NULL,
+                l4_dst_port INTEGER NOT NULL,
+                l4_src_port INTEGER NOT NULL,
+                input_snmp SMALLINT NOT NULL,
+                output_snmp SMALLINT NOT NULL,
+                ipv4_dst_addr INET NOT NULL,
+                ipv4_src_addr INET NOT NULL
             );
         """)
-        c.execute(f'CREATE INDEX netflow_flows_record on netflow_flows (record);')
+        c.execute(f'CREATE INDEX {DB_PREFIX}flows_ts on {DB_PREFIX}flows (ts);')
 
-        c.execute(f'CREATE TABLE {DB_PREFIX}bot_jobs (job_id TEXT NOT NULL PRIMARY KEY, last_used_seq BIGSERIAL);')
+        c.execute(f'CREATE TABLE {DB_PREFIX}bot_jobs (job_id TEXT NOT NULL PRIMARY KEY, last_used_ts NUMERIC(16,6) NOT NULL);')
