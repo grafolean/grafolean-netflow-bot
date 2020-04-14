@@ -135,7 +135,7 @@ def migration_step_2():
         c.execute(f"""
             CREATE UNLOGGED TABLE {DB_PREFIX}flows (
                 ts NUMERIC(16,6) NOT NULL,
-                entity_ip INET NOT NULL,
+                client_ip INET NOT NULL,
                 in_bytes INTEGER NOT NULL,
                 protocol SMALLINT NOT NULL,
                 direction SMALLINT NOT NULL,
@@ -147,6 +147,5 @@ def migration_step_2():
                 ipv4_src_addr INET NOT NULL
             );
         """)
-        c.execute(f'CREATE INDEX {DB_PREFIX}flows_ts on {DB_PREFIX}flows (ts);')
 
         c.execute(f'CREATE TABLE {DB_PREFIX}bot_jobs (job_id TEXT NOT NULL PRIMARY KEY, last_used_ts NUMERIC(16,6) NOT NULL);')

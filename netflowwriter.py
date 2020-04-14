@@ -106,7 +106,7 @@ def write_record(ts, client, export):
 
     client_ip, _ = client
 
-    # check for missing records:
+    # check for missing NetFlow records:
     last_record_seq = last_record_seqs.get(client_ip)
     if last_record_seq is None:
         log.warning(f"Last record sequence number is not known, starting with {export.header.sequence}")
@@ -114,18 +114,15 @@ def write_record(ts, client, export):
         log.error(f"Sequence number ({export.header.sequence}) does not follow ({last_record_seq}), some records might have been skipped")
     last_record_seqs[client_ip] = export.header.sequence
 
+    log.debug(f"Received record [{export.header.sequence}]: {datetime.utcfromtimestamp(ts)} from {client_ip}")
     with get_db_cursor() as c:
-        # first save the flow record:
-        log.debug(f"Received record [{export.header.sequence}]: {datetime.utcfromtimestamp(ts)} from {client_ip}")
-        c.execute(f"INSERT INTO {DB_PREFIX}records (ts, client_ip) VALUES (%s, %s) RETURNING seq;", (ts, client_ip,))
-        record_db_seq = c.fetchone()[0]
-
-        # then save each of the flows within the record, but use execute_values() to perform bulk insert:
-        def _get_data(netflow_version, record_db_seq, flows):
+        # save each of the flows within the record, but use execute_values() to perform bulk insert:
+        def _get_data(netflow_version, ts, client_ip, flows):
             if netflow_version == 9:
                 for f in flows:
                     yield (
-                        record_db_seq,
+                        ts,
+                        client_ip,
                         # "IN_BYTES":
                         f.data["IN_BYTES"],
                         # "PROTOCOL":
@@ -148,7 +145,8 @@ def write_record(ts, client, export):
             elif netflow_version == 5:
                 for f in flows:
                     yield (
-                        record_db_seq,
+                        ts,
+                        client_ip,
                         # "IN_BYTES":
                         f.data["IN_OCTETS"],
                         # "PROTOCOL":
@@ -174,12 +172,12 @@ def write_record(ts, client, export):
                 log.error(f"Only Netflow v5 and v9 currently supported, ignoring record (version: [{export.header.version}])")
                 return
 
-        data_iterator = _get_data(export.header.version, record_db_seq, export.flows)
+        data_iterator = _get_data(export.header.version, ts, client_ip, export.flows)
         psycopg2.extras.execute_values(
             c,
-            f"INSERT INTO {DB_PREFIX}flows (record, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, IPV4_DST_ADDR, IPV4_SRC_ADDR) VALUES %s",
+            f"INSERT INTO {DB_PREFIX}flows (ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, IPV4_DST_ADDR, IPV4_SRC_ADDR) VALUES %s",
             data_iterator,
-            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             page_size=100
         )
 
