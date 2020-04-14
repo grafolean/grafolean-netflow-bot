@@ -52,27 +52,27 @@ def path_part_encode(s):
     return s.replace(".", '%2e')
 
 
-def _get_last_used_seq(job_id):
+def _get_last_used_ts(job_id):
     with get_db_cursor() as c:
-        c.execute(f'SELECT j.last_used_seq, r.ts FROM {DB_PREFIX}bot_jobs j, {DB_PREFIX}records r WHERE j.job_id = %s AND j.last_used_seq = r.seq;', (job_id,))
+        c.execute(f'SELECT j.last_used_ts FROM {DB_PREFIX}bot_jobs j WHERE j.job_id = %s;', (job_id,))
         rec = c.fetchone()
         if rec is None:
-            return None, None
-        last_used_seq, ts = rec
-        return last_used_seq, ts
+            return None
+        last_used_ts, = rec
+        return last_used_ts
 
-def _get_current_max_seq():
+def _get_current_max_ts():
     with get_db_cursor() as c:
-        c.execute(f"SELECT seq, ts FROM {DB_PREFIX}records WHERE seq = (SELECT MAX(seq) FROM {DB_PREFIX}records);")
+        c.execute(f"SELECT MAX(ts) FROM {DB_PREFIX}flows;")
         rec = c.fetchone()
         if rec is None:
-            return None, None
-        max_seq, now_ts = rec
-        return max_seq, now_ts
+            return None
+        max_ts, = rec
+        return max_ts
 
-def _save_current_max_seq(job_id, seq):
+def _save_current_max_ts(job_id, max_ts):
     with get_db_cursor() as c:
-        c.execute(f"INSERT INTO {DB_PREFIX}bot_jobs (job_id, last_used_seq) VALUES (%s, %s) ON CONFLICT (job_id) DO UPDATE SET last_used_seq = %s;", (job_id, seq, seq))
+        c.execute(f"INSERT INTO {DB_PREFIX}bot_jobs (job_id, last_used_ts) VALUES (%s, %s) ON CONFLICT (job_id) DO UPDATE SET last_used_ts = %s;", (job_id, max_ts, max_ts))
 
 
 class NetFlowBot(Collector):
@@ -101,19 +101,19 @@ class NetFlowBot(Collector):
     @staticmethod
     def perform_account_aggr_job(*args, **job_params):
         # \d netflow_flows
-        #    Column        | Type     | Description
-        #   ---------------+----------+-------------
-        #    record        | integer  | // FK -> netflow_records.seq (PK)
-        #    in_bytes      | integer  | number of bytes associated with an IP Flow
-        #    protocol      | smallint | IP protocol (see lookup.py -> PROTOCOLS)
-        #    direction     | smallint | flow direction: 0 - ingress flow, 1 - egress flow
-        #    l4_dst_port   | integer  | destination port
-        #    l4_src_port   | integer  | source port
-        #    input_snmp    | smallint | input interface index
-        #    output_snmp   | smallint | output interface index
-        #    ipv4_src_addr | text     | source IP
-        #    ipv4_dst_addr | text     | destination IP
-        #   ---------------+----------+-------------
+        #      Column     |     Type      | Description
+        #  ---------------+---------------+------------
+        #   ts            | numeric(16,6) | UNIX timestamp
+        #   client_ip     | inet          | entity IP address
+        #   in_bytes      | integer       | number of bytes associated with an IP Flow
+        #   protocol      | smallint      | IP protocol (see lookup.py -> PROTOCOLS)
+        #   direction     | smallint      | flow direction: 0 - ingress flow, 1 - egress flow
+        #   l4_dst_port   | integer       | destination port
+        #   l4_src_port   | integer       | source port
+        #   input_snmp    | smallint      | input interface index
+        #   output_snmp   | smallint      | output interface index
+        #   ipv4_dst_addr | inet          | source IP
+        #   ipv4_src_addr | inet          | destination IP
 
         job_id = job_params["job_id"]
         interval_label = job_params["interval_label"]
@@ -121,13 +121,13 @@ class NetFlowBot(Collector):
         entities = [(entity_info["entity_id"], entity_info["details"]["ipv4"],) for entity_info in job_params["entities_infos"]]
         log.info(f"Starting {interval_label} aggregation job for account {account_id}...")
 
-        last_used_seq, last_used_ts = _get_last_used_seq(job_id)
-        max_seq, max_ts = _get_current_max_seq()
-        if max_seq is None or last_used_ts == max_ts:
+        last_used_ts = _get_last_used_ts(job_id)
+        max_ts = _get_current_max_ts()
+        if max_ts is None or last_used_ts == max_ts:
             log.info(f"No netflow data found for job {job_id}, skipping.")
             return
-        _save_current_max_seq(job_id, max_seq)
-        if last_used_seq is None:
+        _save_current_max_ts(job_id, max_ts)
+        if last_used_ts is None:
             log.info(f"Counter was not yet initialized for job {job_id}, skipping.")
             return
         #time_between = float(max_ts - last_used_ts)
@@ -138,10 +138,10 @@ class NetFlowBot(Collector):
         sum_traffic_egress = 0
         sum_traffic_ingress = 0
         for entity_id, entity_ip in entities:
-            v, s = NetFlowBot.get_traffic_for_entity(interval_label, last_used_seq, max_seq, time_between, DIRECTION_EGRESS, entity_id, entity_ip)
+            v, s = NetFlowBot.get_traffic_for_entity(interval_label, last_used_ts, max_ts, time_between, DIRECTION_EGRESS, entity_id, entity_ip)
             values.extend(v)
             sum_traffic_egress += s
-            v, s = NetFlowBot.get_traffic_for_entity(interval_label, last_used_seq, max_seq, time_between, DIRECTION_INGRESS, entity_id, entity_ip)
+            v, s = NetFlowBot.get_traffic_for_entity(interval_label, last_used_ts, max_ts, time_between, DIRECTION_INGRESS, entity_id, entity_ip)
             values.extend(v)
             sum_traffic_ingress += s
 
@@ -160,10 +160,10 @@ class NetFlowBot(Collector):
         # top N IPs:
         for entity_id, entity_ip in entities:
             for direction in [DIRECTION_EGRESS, DIRECTION_INGRESS]:
-                values.extend(NetFlowBot.get_top_N_IPs_for_entity(interval_label, last_used_seq, max_seq, time_between, direction, entity_id, entity_ip))
-                values.extend(NetFlowBot.get_top_N_IPs_for_entity_interfaces(interval_label, last_used_seq, max_seq, time_between, direction, entity_id, entity_ip))
-                values.extend(NetFlowBot.get_top_N_protocols_for_entity(interval_label, last_used_seq, max_seq, time_between, direction, entity_id, entity_ip))
-                values.extend(NetFlowBot.get_top_N_protocols_for_entity_interfaces(interval_label, last_used_seq, max_seq, time_between, direction, entity_id, entity_ip))
+                values.extend(NetFlowBot.get_top_N_IPs_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
+                values.extend(NetFlowBot.get_top_N_IPs_for_entity_interfaces(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
+                values.extend(NetFlowBot.get_top_N_protocols_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
+                values.extend(NetFlowBot.get_top_N_protocols_for_entity_interfaces(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
 
         if not values:
             log.warning("No values found to be sent to Grafolean")
@@ -192,7 +192,7 @@ class NetFlowBot(Collector):
 
     @staticmethod
     @slow_down
-    def get_traffic_for_entity(interval_label, last_seq, max_seq, time_between, direction, entity_id, entity_ip):
+    def get_traffic_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip):
         # returns cumulative traffic for the whole entity, and traffic per interface for this entity
         with get_db_cursor() as c:
 
@@ -201,17 +201,15 @@ class NetFlowBot(Collector):
                     f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'},
                     sum(f.in_bytes)
                 FROM
-                    {DB_PREFIX}records "r",
                     {DB_PREFIX}flows "f"
                 WHERE
-                    r.client_ip = %s AND
-                    r.seq > %s AND
-                    r.seq <= %s AND
-                    r.seq = f.record AND
+                    f.client_ip = %s AND
+                    f.ts > %s AND
+                    f.ts <= %s AND
                     f.direction = %s
                 GROUP BY
                     f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'}
-            """, (entity_ip, last_seq, max_seq, direction))
+            """, (entity_ip, last_used_ts, max_ts, direction))
 
             values = []
             sum_traffic = 0
@@ -233,7 +231,7 @@ class NetFlowBot(Collector):
 
     @staticmethod
     @slow_down
-    def get_top_N_IPs_for_entity_interfaces(interval_label, last_seq, max_seq, time_between, direction, entity_id, entity_ip):
+    def get_top_N_IPs_for_entity_interfaces(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip):
         with get_db_cursor() as c, get_db_cursor() as c2:
 
             values = []
@@ -241,15 +239,13 @@ class NetFlowBot(Collector):
                 SELECT
                     distinct(f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'}) "interface_index"
                 FROM
-                    netflow_records "r",
-                    netflow_flows "f"
+                    {DB_PREFIX}flows "f"
                 WHERE
-                    r.client_ip = %s AND
-                    r.seq > %s AND
-                    r.seq <= %s AND
-                    r.seq = f.record AND
+                    f.client_ip = %s AND
+                    f.ts > %s AND
+                    f.ts <= %s AND
                     f.direction = %s
-            """, (entity_ip, last_seq, max_seq, direction,))
+            """, (entity_ip, last_used_ts, max_ts, direction,))
 
             for interface_index, in c.fetchall():
                 c2.execute(f"""
@@ -257,13 +253,11 @@ class NetFlowBot(Collector):
                         f.{'ipv4_src_addr' if direction == DIRECTION_INGRESS else 'ipv4_dst_addr'},
                         sum(f.in_bytes) "traffic"
                     FROM
-                        netflow_records "r",
-                        netflow_flows "f"
+                        {DB_PREFIX}flows "f"
                     WHERE
-                        r.client_ip = %s AND
-                        r.seq > %s AND
-                        r.seq <= %s AND
-                        r.seq = f.record AND
+                        f.client_ip = %s AND
+                        f.ts > %s AND
+                        f.ts <= %s AND
                         f.direction = %s AND
                         f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'} = %s
                     GROUP BY
@@ -271,7 +265,7 @@ class NetFlowBot(Collector):
                     ORDER BY
                         traffic desc
                     LIMIT {TOP_N_MAX};
-                """, (entity_ip, last_seq, max_seq, direction, interface_index,))
+                """, (entity_ip, last_used_ts, max_ts, direction, interface_index,))
 
                 output_path_interface = NetFlowBot.construct_output_path_prefix(interval_label, direction, entity_id, interface=interface_index)
                 for top_ip, traffic_bytes in c2.fetchall():
@@ -285,7 +279,7 @@ class NetFlowBot(Collector):
 
     @staticmethod
     @slow_down
-    def get_top_N_IPs_for_entity(interval_label, last_seq, max_seq, time_between, direction, entity_id, entity_ip):
+    def get_top_N_IPs_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip):
         with get_db_cursor() as c:
             values = []
             c.execute(f"""
@@ -293,20 +287,18 @@ class NetFlowBot(Collector):
                     f.{'ipv4_src_addr' if direction == DIRECTION_INGRESS else 'ipv4_dst_addr'},
                     sum(f.in_bytes) "traffic"
                 FROM
-                    netflow_records "r",
-                    netflow_flows "f"
+                    {DB_PREFIX}flows "f"
                 WHERE
-                    r.client_ip = %s AND
-                    r.seq > %s AND
-                    r.seq <= %s AND
-                    r.seq = f.record AND
+                    f.client_ip = %s AND
+                    f.ts > %s AND
+                    f.ts <= %s AND
                     f.direction = %s
                 GROUP BY
                     f.{'ipv4_src_addr' if direction == DIRECTION_INGRESS else 'ipv4_dst_addr'}
                 ORDER BY
                     traffic desc
                 LIMIT {TOP_N_MAX};
-            """, (entity_ip, last_seq, max_seq, direction,))
+            """, (entity_ip, last_used_ts, max_ts, direction,))
 
             output_path_entity = NetFlowBot.construct_output_path_prefix(interval_label, direction, entity_id, interface=None)
             for top_ip, traffic_bytes in c.fetchall():
@@ -321,7 +313,7 @@ class NetFlowBot(Collector):
 
     @staticmethod
     @slow_down
-    def get_top_N_protocols_for_entity_interfaces(interval_label, last_seq, max_seq, time_between, direction, entity_id, entity_ip):
+    def get_top_N_protocols_for_entity_interfaces(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip):
         with get_db_cursor() as c, get_db_cursor() as c2:
 
             values = []
@@ -329,15 +321,13 @@ class NetFlowBot(Collector):
                 SELECT
                     distinct(f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'}) "interface_index"
                 FROM
-                    netflow_records "r",
-                    netflow_flows "f"
+                    {DB_PREFIX}flows "f"
                 WHERE
-                    r.client_ip = %s AND
-                    r.seq > %s AND
-                    r.seq <= %s AND
-                    r.seq = f.record AND
+                    f.client_ip = %s AND
+                    f.ts > %s AND
+                    f.ts <= %s AND
                     f.direction = %s
-            """, (entity_ip, last_seq, max_seq, direction,))
+            """, (entity_ip, last_used_ts, max_ts, direction,))
 
             for interface_index, in c.fetchall():
                 c2.execute(f"""
@@ -345,13 +335,11 @@ class NetFlowBot(Collector):
                         f.protocol,
                         sum(f.in_bytes) "traffic"
                     FROM
-                        netflow_records "r",
-                        netflow_flows "f"
+                        {DB_PREFIX}flows "f"
                     WHERE
-                        r.client_ip = %s AND
-                        r.seq > %s AND
-                        r.seq <= %s AND
-                        r.seq = f.record AND
+                        f.client_ip = %s AND
+                        f.ts > %s AND
+                        f.ts <= %s AND
                         f.direction = %s AND
                         f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'} = %s
                     GROUP BY
@@ -359,7 +347,7 @@ class NetFlowBot(Collector):
                     ORDER BY
                         traffic desc
                     LIMIT {TOP_N_MAX};
-                """, (entity_ip, last_seq, max_seq, direction, interface_index,))
+                """, (entity_ip, last_used_ts, max_ts, direction, interface_index,))
 
                 output_path_interface = NetFlowBot.construct_output_path_prefix(interval_label, direction, entity_id, interface=interface_index)
                 for protocol, traffic_bytes in c2.fetchall():
@@ -373,7 +361,7 @@ class NetFlowBot(Collector):
 
     @staticmethod
     @slow_down
-    def get_top_N_protocols_for_entity(interval_label, last_seq, max_seq, time_between, direction, entity_id, entity_ip):
+    def get_top_N_protocols_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip):
         with get_db_cursor() as c:
             values = []
             c.execute(f"""
@@ -381,20 +369,18 @@ class NetFlowBot(Collector):
                     f.protocol,
                     sum(f.in_bytes) "traffic"
                 FROM
-                    netflow_records "r",
-                    netflow_flows "f"
+                    {DB_PREFIX}flows "f"
                 WHERE
-                    r.client_ip = %s AND
-                    r.seq > %s AND
-                    r.seq <= %s AND
-                    r.seq = f.record AND
+                    f.client_ip = %s AND
+                    f.ts > %s AND
+                    f.ts <= %s AND
                     f.direction = %s
                 GROUP BY
                     f.protocol
                 ORDER BY
                     traffic desc
                 LIMIT {TOP_N_MAX};
-            """, (entity_ip, last_seq, max_seq, direction,))
+            """, (entity_ip, last_used_ts, max_ts, direction,))
 
             output_path_entity = NetFlowBot.construct_output_path_prefix(interval_label, direction, entity_id, interface=None)
             for protocol, traffic_bytes in c.fetchall():
@@ -410,18 +396,16 @@ class NetFlowBot(Collector):
     # @slow_down
     # def get_top_N_protocols(output_path_prefix, from_time, to_time, interface_index, is_direction_in=True):
     #     with get_db_cursor() as c:
-    #         # TODO: missing check for IP: r.client_ip = %s AND
+    #         # TODO: missing check for IP: f.client_ip = %s AND
     #         c.execute(f"""
     #             SELECT
     #                 f.PROTOCOL,
     #                 sum(f.IN_BYTES) "traffic"
     #             FROM
-    #                 netflow_records "r",
-    #                 netflow_flows "f"
+    #                 {DB_PREFIX}flows "f"
     #             WHERE
-    #                 r.ts >= %s AND
-    #                 r.ts < %s AND
-    #                 r.seq = f.record AND
+    #                 f.ts >= %s AND
+    #                 f.ts < %s AND
     #                 f.{'INPUT_SNMP' if is_direction_in else 'OUTPUT_SNMP'} = %s AND
     #                 f.DIRECTION = {'0' if is_direction_in else '1'}
     #             GROUP BY

@@ -109,12 +109,12 @@ def write_record(ts, client, export):
     # check for missing NetFlow records:
     last_record_seq = last_record_seqs.get(client_ip)
     if last_record_seq is None:
-        log.warning(f"Last record sequence number is not known, starting with {export.header.sequence}")
+        log.warning(f"[{client_ip}] Last record sequence number is not known, starting with {export.header.sequence}")
     elif export.header.sequence != last_record_seq + 1:
-        log.error(f"Sequence number ({export.header.sequence}) does not follow ({last_record_seq}), some records might have been skipped")
+        log.error(f"[{client_ip}] Sequence number ({export.header.sequence}) does not follow ({last_record_seq}), some records might have been skipped")
     last_record_seqs[client_ip] = export.header.sequence
 
-    log.debug(f"Received record [{export.header.sequence}]: {datetime.utcfromtimestamp(ts)} from {client_ip}")
+    log.debug(f"[{client_ip}] Received record [{export.header.sequence}]: {datetime.utcfromtimestamp(ts)}")
     with get_db_cursor() as c:
         # save each of the flows within the record, but use execute_values() to perform bulk insert:
         def _get_data(netflow_version, ts, client_ip, flows):
@@ -169,7 +169,7 @@ def write_record(ts, client, export):
                         socket.inet_ntoa(struct.pack('!I', f.data["IPV4_SRC_ADDR"])),
                     )
             else:
-                log.error(f"Only Netflow v5 and v9 currently supported, ignoring record (version: [{export.header.version}])")
+                log.error(f"[{client_ip}] Only Netflow v5 and v9 currently supported, ignoring record (version: [{export.header.version}])")
                 return
 
         data_iterator = _get_data(export.header.version, ts, client_ip, export.flows)

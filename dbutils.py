@@ -147,5 +147,6 @@ def migration_step_2():
                 ipv4_src_addr INET NOT NULL
             );
         """)
+        c.execute(f'CREATE INDEX {DB_PREFIX}flows_ts on {DB_PREFIX}flows (ts);')
 
         c.execute(f'CREATE TABLE {DB_PREFIX}bot_jobs (job_id TEXT NOT NULL PRIMARY KEY, last_used_ts NUMERIC(16,6) NOT NULL);')
