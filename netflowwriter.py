@@ -1,5 +1,6 @@
 import argparse
 import base64
+from datetime import datetime, timedelta
 import gzip
 import json
 import logging
@@ -47,6 +48,7 @@ def process_named_pipe(named_pipe_filename):
             raise
 
     templates = {}
+    last_day_seq = None
     while True:
         with open(named_pipe_filename, "rb") as fp:
             log.info(f"Opened named pipe {named_pipe_filename}")
@@ -60,9 +62,16 @@ def process_named_pipe(named_pipe_filename):
                     data_b64, ts, client = json.loads(line)
                     data = base64.b64decode(data_b64)
 
+                    # sequence number of the (24h) day from UNIX epoch helps us determine the
+                    # DB partition we are working with:
+                    day_seq = int(ts // (24 * 3600))
+                    if day_seq != last_day_seq:
+                        create_flow_table_partition(day_seq)
+                        last_day_seq = day_seq
+
                     try:
                         export = parse_packet(data, templates)
-                        write_record(ts, client, export)
+                        write_record(ts, client, export, day_seq)
                     except UnknownNetFlowVersion:
                         log.warning("Unknown NetFlow version")
                         continue
@@ -75,10 +84,22 @@ def process_named_pipe(named_pipe_filename):
                     log.exception("Error writing line, skipping...")
 
 
+# Based on timestamp, make sure that the partition exists:
+def create_flow_table_partition(day_seq):
+    day_start = day_seq * (24 * 3600)
+    day_end = day_start + (24 * 3600)
+    with get_db_cursor() as c:
+        # "When creating a range partition, the lower bound specified with FROM is an inclusive bound, whereas
+        #  the upper bound specified with TO is an exclusive bound."
+        # https://www.postgresql.org/docs/12/sql-createtable.html
+        c.execute(f"CREATE UNLOGGED TABLE IF NOT EXISTS {DB_PREFIX}flows_{day_seq} PARTITION OF {DB_PREFIX}flows FOR VALUES FROM ({day_start}) TO ({day_end})")
+        return day_seq
+
+
 last_record_seqs = {}
 
 
-def write_record(ts, client, export):
+def write_record(ts, client, export, day_seq):
     # {
     #   "DST_AS": 0,
     #   "SRC_AS": 0,
@@ -175,7 +196,7 @@ def write_record(ts, client, export):
         data_iterator = _get_data(export.header.version, ts, client_ip, export.flows)
         psycopg2.extras.execute_values(
             c,
-            f"INSERT INTO {DB_PREFIX}flows (ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, IPV4_DST_ADDR, IPV4_SRC_ADDR) VALUES %s",
+            f"INSERT INTO {DB_PREFIX}flows_{day_seq} (ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, IPV4_DST_ADDR, IPV4_SRC_ADDR) VALUES %s",
             data_iterator,
             "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             page_size=100

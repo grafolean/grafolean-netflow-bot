@@ -145,7 +145,7 @@ def migration_step_2():
                 output_snmp SMALLINT NOT NULL,
                 ipv4_dst_addr INET NOT NULL,
                 ipv4_src_addr INET NOT NULL
-            );
+            ) PARTITION BY RANGE (ts);
         """)
         c.execute(f'CREATE INDEX {DB_PREFIX}flows_ts on {DB_PREFIX}flows (ts);')
 
