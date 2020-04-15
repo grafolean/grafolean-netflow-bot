@@ -48,7 +48,10 @@ def process_named_pipe(named_pipe_filename):
             raise
 
     templates = {}
+    last_record_seqs = {}
     last_day_seq = None
+    buffer = []  # we merge together writes to DB
+    MAX_BUFFER_SIZE = 5
     while True:
         with open(named_pipe_filename, "rb") as fp:
             log.info(f"Opened named pipe {named_pipe_filename}")
@@ -60,18 +63,34 @@ def process_named_pipe(named_pipe_filename):
 
                 try:
                     data_b64, ts, client = json.loads(line)
+                    client_ip, _ = client
                     data = base64.b64decode(data_b64)
 
                     # sequence number of the (24h) day from UNIX epoch helps us determine the
                     # DB partition we are working with:
                     day_seq = int(ts // (24 * 3600))
                     if day_seq != last_day_seq:
-                        create_flow_table_partition(day_seq)
+                        write_buffer(buffer, last_day_seq)
+                        ensure_flow_table_partition_exists(day_seq)
                         last_day_seq = day_seq
 
                     try:
                         export = parse_packet(data, templates)
-                        write_record(ts, client, export, day_seq)
+                        log.debug(f"[{client_ip}] Received record [{export.header.sequence}]: {datetime.utcfromtimestamp(ts)}")
+
+                        # check for missing NetFlow records:
+                        last_record_seq = last_record_seqs.get(client_ip)
+                        if last_record_seq is None:
+                            log.warning(f"[{client_ip}] Last record sequence number is not known, starting with {export.header.sequence}")
+                        elif export.header.sequence != last_record_seq + 1:
+                            log.error(f"[{client_ip}] Sequence number ({export.header.sequence}) does not follow ({last_record_seq}), some records might have been skipped")
+                        last_record_seqs[client_ip] = export.header.sequence
+
+                        # append the record to a buffer and write to DB when buffer is full enough:
+                        buffer.append((ts, client_ip, export,))
+                        if len(buffer) > MAX_BUFFER_SIZE:
+                            write_buffer(buffer, day_seq)
+                            buffer = []
                     except UnknownNetFlowVersion:
                         log.warning("Unknown NetFlow version")
                         continue
@@ -85,7 +104,7 @@ def process_named_pipe(named_pipe_filename):
 
 
 # Based on timestamp, make sure that the partition exists:
-def create_flow_table_partition(day_seq):
+def ensure_flow_table_partition_exists(day_seq):
     day_start = day_seq * (24 * 3600)
     day_end = day_start + (24 * 3600)
     with get_db_cursor() as c:
@@ -96,10 +115,7 @@ def create_flow_table_partition(day_seq):
         return day_seq
 
 
-last_record_seqs = {}
-
-
-def write_record(ts, client, export, day_seq):
+def write_buffer(buffer, day_seq):
     # {
     #   "DST_AS": 0,
     #   "SRC_AS": 0,
@@ -125,81 +141,73 @@ def write_record(ts, client, export, day_seq):
     # }
     # https://www.cisco.com/en/US/technologies/tk648/tk362/technologies_white_paper09186a00800a3db9.html#wp9001622
 
-    client_ip, _ = client
 
-    # check for missing NetFlow records:
-    last_record_seq = last_record_seqs.get(client_ip)
-    if last_record_seq is None:
-        log.warning(f"[{client_ip}] Last record sequence number is not known, starting with {export.header.sequence}")
-    elif export.header.sequence != last_record_seq + 1:
-        log.error(f"[{client_ip}] Sequence number ({export.header.sequence}) does not follow ({last_record_seq}), some records might have been skipped")
-    last_record_seqs[client_ip] = export.header.sequence
-
-    log.debug(f"[{client_ip}] Received record [{export.header.sequence}]: {datetime.utcfromtimestamp(ts)}")
+    log.debug(f"Writing {len(buffer)} records to DB for day {day_seq}")
     with get_db_cursor() as c:
         # save each of the flows within the record, but use execute_values() to perform bulk insert:
-        def _get_data(netflow_version, ts, client_ip, flows):
-            if netflow_version == 9:
-                for f in flows:
-                    yield (
-                        ts,
-                        client_ip,
-                        # "IN_BYTES":
-                        f.data["IN_BYTES"],
-                        # "PROTOCOL":
-                        f.data["PROTOCOL"],
-                        # "DIRECTION":
-                        f.data["DIRECTION"],
-                        # "L4_DST_PORT":
-                        f.data["L4_DST_PORT"],
-                        # "L4_SRC_PORT":
-                        f.data["L4_SRC_PORT"],
-                        # "INPUT_SNMP":
-                        f.data["INPUT_SNMP"],
-                        # "OUTPUT_SNMP":
-                        f.data["OUTPUT_SNMP"],
-                        # "IPV4_DST_ADDR":
-                        f.data["IPV4_DST_ADDR"],
-                        # "IPV4_SRC_ADDR":
-                        f.data["IPV4_SRC_ADDR"],
-                    )
-            elif netflow_version == 5:
-                for f in flows:
-                    yield (
-                        ts,
-                        client_ip,
-                        # "IN_BYTES":
-                        f.data["IN_OCTETS"],
-                        # "PROTOCOL":
-                        f.data["PROTO"],
-                        # "DIRECTION":
-                        DIRECTION_INGRESS,
-                        # "L4_DST_PORT":
-                        f.data["DST_PORT"],
-                        # "L4_SRC_PORT":
-                        f.data["SRC_PORT"],
-                        # "INPUT_SNMP":
-                        f.data["INPUT"],
-                        # "OUTPUT_SNMP":
-                        f.data["OUTPUT"],
-                        # netflow v5 IP addresses are decoded to integers, which is less suitable for us - pack
-                        # them back to bytes and transform them to strings:
-                        # "IPV4_DST_ADDR":
-                        socket.inet_ntoa(struct.pack('!I', f.data["IPV4_DST_ADDR"])),
-                        # "IPV4_SRC_ADDR":
-                        socket.inet_ntoa(struct.pack('!I', f.data["IPV4_SRC_ADDR"])),
-                    )
-            else:
-                log.error(f"[{client_ip}] Only Netflow v5 and v9 currently supported, ignoring record (version: [{export.header.version}])")
-                return
+        def _get_data(buffer):
+            for ts, client_ip, export in buffer:
+                netflow_version, flows = export.header.version, export.flows
+                if netflow_version == 9:
+                    for f in flows:
+                        yield (
+                            ts,
+                            client_ip,
+                            # "IN_BYTES":
+                            f.data["IN_BYTES"],
+                            # "PROTOCOL":
+                            f.data["PROTOCOL"],
+                            # "DIRECTION":
+                            f.data["DIRECTION"],
+                            # "L4_DST_PORT":
+                            f.data["L4_DST_PORT"],
+                            # "L4_SRC_PORT":
+                            f.data["L4_SRC_PORT"],
+                            # "INPUT_SNMP":
+                            f.data["INPUT_SNMP"],
+                            # "OUTPUT_SNMP":
+                            f.data["OUTPUT_SNMP"],
+                            # "IPV4_DST_ADDR":
+                            f.data["IPV4_DST_ADDR"],
+                            # "IPV4_SRC_ADDR":
+                            f.data["IPV4_SRC_ADDR"],
+                        )
+                elif netflow_version == 5:
+                    for f in flows:
+                        yield (
+                            ts,
+                            client_ip,
+                            # "IN_BYTES":
+                            f.data["IN_OCTETS"],
+                            # "PROTOCOL":
+                            f.data["PROTO"],
+                            # "DIRECTION":
+                            DIRECTION_INGRESS,
+                            # "L4_DST_PORT":
+                            f.data["DST_PORT"],
+                            # "L4_SRC_PORT":
+                            f.data["SRC_PORT"],
+                            # "INPUT_SNMP":
+                            f.data["INPUT"],
+                            # "OUTPUT_SNMP":
+                            f.data["OUTPUT"],
+                            # netflow v5 IP addresses are decoded to integers, which is less suitable for us - pack
+                            # them back to bytes and transform them to strings:
+                            # "IPV4_DST_ADDR":
+                            socket.inet_ntoa(struct.pack('!I', f.data["IPV4_DST_ADDR"])),
+                            # "IPV4_SRC_ADDR":
+                            socket.inet_ntoa(struct.pack('!I', f.data["IPV4_SRC_ADDR"])),
+                        )
+                else:
+                    log.error(f"[{client_ip}] Only Netflow v5 and v9 currently supported, ignoring record (version: [{export.header.version}])")
 
-        data_iterator = _get_data(export.header.version, ts, client_ip, export.flows)
+        data_iterator = _get_data(buffer)
         psycopg2.extras.execute_values(
             c,
             f"INSERT INTO {DB_PREFIX}flows_{day_seq} (ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, IPV4_DST_ADDR, IPV4_SRC_ADDR) VALUES %s",
             data_iterator,
             "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            page_size=100
+            page_size=500
         )
 
 if __name__ == "__main__":
