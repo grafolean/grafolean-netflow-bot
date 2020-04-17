@@ -134,7 +134,7 @@ def migration_step_2():
         # It still allows us to perform queries, but if the database crashes we lose the raw records.
         c.execute(f"""
             CREATE UNLOGGED TABLE {DB_PREFIX}flows (
-                ts NUMERIC(16,6) NOT NULL,
+                ts INTEGER NOT NULL,
                 client_ip INET NOT NULL,
                 in_bytes INTEGER NOT NULL,
                 protocol SMALLINT NOT NULL,

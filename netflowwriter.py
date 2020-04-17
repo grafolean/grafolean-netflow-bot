@@ -2,6 +2,7 @@ import argparse
 import base64
 from datetime import datetime, timedelta
 import gzip
+from io import BytesIO
 import json
 import logging
 import os
@@ -37,8 +38,44 @@ logging.addLevelName(logging.ERROR, color('ERR', bg='red'))
 log = logging.getLogger("{}.{}".format(__name__, "writer"))
 
 
-# Amount of time to wait before dropping an undecodable ExportPacket
-PACKET_TIMEOUT = 60 * 60
+# 11-byte signature (constructed in this way to detect possible mangled bytes), flags, header extension
+# https://www.postgresql.org/docs/9.0/sql-copy.html#AEN59377
+PG_COPYFROM_INIT = struct.pack('!11sII', b'PGCOPY\n\377\r\n\0', 0, 0)
+# 4-byte INETv4 prefix: family, netmask, is_cidr, n bytes
+# https://doxygen.postgresql.org/network_8c_source.html#l00193
+IPV4_PREFIX = struct.pack('!BBBB', socket.AF_INET, 32, 0, 4)
+
+
+def _pgwriter_init():
+    pg_writer = BytesIO()
+    pg_writer.write(PG_COPYFROM_INIT)
+    return pg_writer
+
+
+def _pgwriter_write(pgwriter, ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, IPV4_DST_ADDR, IPV4_SRC_ADDR):
+    buf = struct.pack('!HiIi4s4siIiHiHiIiIiHiHi4s4si4s4s',
+        11,  # number of columns
+        4, int(ts),                       # integer - beware of Y2038 problem! :)
+        8, IPV4_PREFIX, socket.inet_aton(client_ip),   # 4 bytes prefix + 4 bytes IP
+        4, IN_BYTES,                      # integer
+        2, PROTOCOL,
+        2, DIRECTION,
+        4, L4_DST_PORT,
+        4, L4_SRC_PORT,
+        2, INPUT_SNMP,
+        2, OUTPUT_SNMP,
+        8, IPV4_PREFIX, IPV4_DST_ADDR,
+        8, IPV4_PREFIX, IPV4_SRC_ADDR,
+    )
+    pgwriter.write(buf)
+
+
+def _pgwriter_finish(pgwriter):
+    with get_db_cursor() as c:
+        pgwriter.write(struct.pack('!h', -1))
+        pgwriter.seek(0)
+        c.copy_expert(f"COPY {DB_PREFIX}flows FROM STDIN WITH BINARY", pgwriter)
+
 
 def process_named_pipe(named_pipe_filename):
     try:
@@ -143,72 +180,68 @@ def write_buffer(buffer, day_seq):
 
 
     log.debug(f"Writing {len(buffer)} records to DB for day {day_seq}")
-    with get_db_cursor() as c:
-        # save each of the flows within the record, but use execute_values() to perform bulk insert:
-        def _get_data(buffer):
-            for ts, client_ip, export in buffer:
-                netflow_version, flows = export.header.version, export.flows
-                if netflow_version == 9:
-                    for f in flows:
-                        yield (
-                            ts,
-                            client_ip,
-                            # "IN_BYTES":
-                            f.data["IN_BYTES"],
-                            # "PROTOCOL":
-                            f.data["PROTOCOL"],
-                            # "DIRECTION":
-                            f.data["DIRECTION"],
-                            # "L4_DST_PORT":
-                            f.data["L4_DST_PORT"],
-                            # "L4_SRC_PORT":
-                            f.data["L4_SRC_PORT"],
-                            # "INPUT_SNMP":
-                            f.data["INPUT_SNMP"],
-                            # "OUTPUT_SNMP":
-                            f.data["OUTPUT_SNMP"],
-                            # "IPV4_DST_ADDR":
-                            f.data["IPV4_DST_ADDR"],
-                            # "IPV4_SRC_ADDR":
-                            f.data["IPV4_SRC_ADDR"],
-                        )
-                elif netflow_version == 5:
-                    for f in flows:
-                        yield (
-                            ts,
-                            client_ip,
-                            # "IN_BYTES":
-                            f.data["IN_OCTETS"],
-                            # "PROTOCOL":
-                            f.data["PROTO"],
-                            # "DIRECTION":
-                            DIRECTION_INGRESS,
-                            # "L4_DST_PORT":
-                            f.data["DST_PORT"],
-                            # "L4_SRC_PORT":
-                            f.data["SRC_PORT"],
-                            # "INPUT_SNMP":
-                            f.data["INPUT"],
-                            # "OUTPUT_SNMP":
-                            f.data["OUTPUT"],
-                            # netflow v5 IP addresses are decoded to integers, which is less suitable for us - pack
-                            # them back to bytes and transform them to strings:
-                            # "IPV4_DST_ADDR":
-                            socket.inet_ntoa(struct.pack('!I', f.data["IPV4_DST_ADDR"])),
-                            # "IPV4_SRC_ADDR":
-                            socket.inet_ntoa(struct.pack('!I', f.data["IPV4_SRC_ADDR"])),
-                        )
-                else:
-                    log.error(f"[{client_ip}] Only Netflow v5 and v9 currently supported, ignoring record (version: [{export.header.version}])")
+    # save each of the flows within the record, but use execute_values() to perform bulk insert:
+    def _get_data(buffer):
+        for ts, client_ip, export in buffer:
+            netflow_version, flows = export.header.version, export.flows
+            if netflow_version == 9:
+                for f in flows:
+                    yield (
+                        ts,
+                        client_ip,
+                        # "IN_BYTES":
+                        f.data["IN_BYTES"],
+                        # "PROTOCOL":
+                        f.data["PROTOCOL"],
+                        # "DIRECTION":
+                        f.data["DIRECTION"],
+                        # "L4_DST_PORT":
+                        f.data["L4_DST_PORT"],
+                        # "L4_SRC_PORT":
+                        f.data["L4_SRC_PORT"],
+                        # "INPUT_SNMP":
+                        f.data["INPUT_SNMP"],
+                        # "OUTPUT_SNMP":
+                        f.data["OUTPUT_SNMP"],
+                        # "IPV4_DST_ADDR":
+                        socket.inet_aton(f.data["IPV4_DST_ADDR"]),
+                        # "IPV4_SRC_ADDR":
+                        socket.inet_aton(f.data["IPV4_SRC_ADDR"]),
+                    )
+            elif netflow_version == 5:
+                for f in flows:
+                    yield (
+                        ts,
+                        client_ip,
+                        # "IN_BYTES":
+                        f.data["IN_OCTETS"],
+                        # "PROTOCOL":
+                        f.data["PROTO"],
+                        # "DIRECTION":
+                        DIRECTION_INGRESS,
+                        # "L4_DST_PORT":
+                        f.data["DST_PORT"],
+                        # "L4_SRC_PORT":
+                        f.data["SRC_PORT"],
+                        # "INPUT_SNMP":
+                        f.data["INPUT"],
+                        # "OUTPUT_SNMP":
+                        f.data["OUTPUT"],
+                        # netflow v5 IP addresses are decoded to integers, which is less suitable for us - pack
+                        # them back to bytes and transform them to strings:
+                        # "IPV4_DST_ADDR":
+                        struct.pack('!I', f.data["IPV4_DST_ADDR"]),
+                        # "IPV4_SRC_ADDR":
+                        struct.pack('!I', f.data["IPV4_SRC_ADDR"]),
+                    )
+            else:
+                log.error(f"[{client_ip}] Only Netflow v5 and v9 currently supported, ignoring record (version: [{export.header.version}])")
 
-        data_iterator = _get_data(buffer)
-        psycopg2.extras.execute_values(
-            c,
-            f"INSERT INTO {DB_PREFIX}flows_{day_seq} (ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, IPV4_DST_ADDR, IPV4_SRC_ADDR) VALUES %s",
-            data_iterator,
-            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            page_size=500
-        )
+    pgwriter = _pgwriter_init()
+    for data in _get_data(buffer):
+        _pgwriter_write(pgwriter, *data)
+    _pgwriter_finish(pgwriter)
+
 
 if __name__ == "__main__":
     NAMED_PIPE_FILENAME = os.environ.get('NAMED_PIPE_FILENAME', None)
