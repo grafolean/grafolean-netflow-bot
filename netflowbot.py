@@ -4,6 +4,7 @@ import gzip
 import json
 import logging
 import os
+import re
 import sys
 import time
 from collections import defaultdict
@@ -75,9 +76,36 @@ def _save_current_max_ts(job_id, max_ts):
         c.execute(f"INSERT INTO {DB_PREFIX}bot_jobs (job_id, last_used_ts) VALUES (%s, %s) ON CONFLICT (job_id) DO UPDATE SET last_used_ts = %s;", (job_id, max_ts, max_ts))
 
 
+def job_maint_remove_old_partitions(*args, **kwargs):
+    LEAVE_N_PAST_DAYS = 5
+    with get_db_cursor() as c:
+        log.info("MAINT: Maintenance started - removing old partitions")
+        today_seq = int(time.time() // (24 * 3600))
+        c.execute(f"SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE '{DB_PREFIX}flows_%';")
+        for tablename, in c.fetchall():
+            m = re.match(f'^{DB_PREFIX}flows_([0-9]+)$', tablename)
+            if not m:
+                log.warning(f"MAINT: Table {tablename} does not match regex, skipping")
+                continue
+            day_seq = int(m.group(1))
+            if day_seq > today_seq:
+                log.warning(f"MAINT: CAREFUL! Table {tablename} marks a future day (today is {today_seq}); this should never happen! Skipping.")
+                continue
+            if day_seq < today_seq - LEAVE_N_PAST_DAYS:
+                log.info(f"MAINT: Removing old data: {tablename} (today is {today_seq})")
+                c.execute(f"DROP TABLE {tablename};")
+            else:
+                log.info(f"MAINT: Leaving {tablename} (today is {today_seq})")
+    log.info("MAINT: Maintenance finished.")
+
+
 class NetFlowBot(Collector):
 
     def jobs(self):
+        # remove old partitions:
+        job_id = 'maint/remove_old_data'
+        yield job_id, [3600], job_maint_remove_old_partitions, {}, 50
+
         # first merge together entity infos so that those entities from the same account are together:
         accounts_infos = defaultdict(list)
         for entity_info in self.fetch_job_configs('netflow'):
