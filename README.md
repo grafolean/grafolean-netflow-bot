@@ -13,7 +13,6 @@ Requirements:
 - Grafolean must be accessible via HTTP(S)
 
 Current limitations:
-- removing old data is not implemented yet
 - only NetFlow v9 and v5 are supported
 
 # License
