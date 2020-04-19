@@ -60,7 +60,7 @@ def _get_last_used_ts(job_id):
         if rec is None:
             return None
         last_used_ts, = rec
-        return last_used_ts
+        return int(last_used_ts)
 
 def _get_current_max_ts():
     with get_db_cursor() as c:
