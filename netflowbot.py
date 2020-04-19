@@ -191,6 +191,7 @@ class NetFlowBot(Collector):
                 values.extend(NetFlowBot.get_top_N_IPs_for_entity_interfaces(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
                 values.extend(NetFlowBot.get_top_N_protocols_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
                 values.extend(NetFlowBot.get_top_N_protocols_for_entity_interfaces(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
+                values.extend(NetFlowBot.get_top_N_connections_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
 
         if not values:
             log.warning("No values found to be sent to Grafolean")
@@ -412,6 +413,39 @@ class NetFlowBot(Collector):
             output_path_entity = NetFlowBot.construct_output_path_prefix(interval_label, direction, entity_id, interface=None)
             for protocol, traffic_bytes in c.fetchall():
                 output_path = f"{output_path_entity}.topprotocol.{path_part_encode(PROTOCOLS[protocol])}"
+                values.append({
+                    'p': output_path,
+                    'v': traffic_bytes / time_between,  # Bps
+                })
+
+            return values
+
+    @staticmethod
+    @slow_down
+    def get_top_N_connections_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip):
+        with get_db_cursor() as c:
+            values = []
+            c.execute(f"""
+                SELECT
+                    f.ipv4_src_addr, f.ipv4_dst_addr,
+                    sum(f.in_bytes) "traffic"
+                FROM
+                    {DB_PREFIX}flows "f"
+                WHERE
+                    f.client_ip = %s AND
+                    f.ts > %s AND
+                    f.ts <= %s AND
+                    f.direction = %s
+                GROUP BY
+                    f.ipv4_src_addr, f.ipv4_dst_addr
+                ORDER BY
+                    traffic desc
+                LIMIT {TOP_N_MAX};
+            """, (entity_ip, last_used_ts, max_ts, direction,))
+
+            output_path_entity = NetFlowBot.construct_output_path_prefix(interval_label, direction, entity_id, interface=None)
+            for ipv4_src_addr, ipv4_dst_addr, traffic_bytes in c.fetchall():
+                output_path = f"{output_path_entity}.topconn.{path_part_encode(ipv4_src_addr)}.{path_part_encode(ipv4_dst_addr)}"
                 values.append({
                     'p': output_path,
                     'v': traffic_bytes / time_between,  # Bps
