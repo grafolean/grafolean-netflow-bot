@@ -14,7 +14,7 @@ import dotenv
 import requests
 
 from grafoleancollector import Collector, send_results_to_grafolean
-from dbutils import get_db_cursor, DB_PREFIX
+from dbutils import get_db_cursor, DB_PREFIX, S_PER_PARTITION, LEAVE_N_PAST_PARTITIONS
 from lookup import PROTOCOLS, DIRECTION_INGRESS, DIRECTION_EGRESS
 
 logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
@@ -77,10 +77,9 @@ def _save_current_max_ts(job_id, max_ts):
 
 
 def job_maint_remove_old_partitions(*args, **kwargs):
-    LEAVE_N_PAST_DAYS = 5
     with get_db_cursor() as c:
         log.info("MAINT: Maintenance started - removing old partitions")
-        today_seq = int(time.time() // (24 * 3600))
+        today_seq = int(time.time() // S_PER_PARTITION)
         c.execute(f"SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE '{DB_PREFIX}flows_%';")
         for tablename, in c.fetchall():
             m = re.match(f'^{DB_PREFIX}flows_([0-9]+)$', tablename)
@@ -91,7 +90,7 @@ def job_maint_remove_old_partitions(*args, **kwargs):
             if day_seq > today_seq:
                 log.warning(f"MAINT: CAREFUL! Table {tablename} marks a future day (today is {today_seq}); this should never happen! Skipping.")
                 continue
-            if day_seq < today_seq - LEAVE_N_PAST_DAYS:
+            if day_seq < today_seq - LEAVE_N_PAST_PARTITIONS:
                 log.info(f"MAINT: Removing old data: {tablename} (today is {today_seq})")
                 c.execute(f"DROP TABLE {tablename};")
             else:

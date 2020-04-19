@@ -24,6 +24,7 @@ log = logging.getLogger("{}.{}".format(__name__, "dbutils"))
 db_pool = None
 DB_PREFIX = 'netflow_'
 S_PER_PARTITION = 3600
+LEAVE_N_PAST_PARTITIONS = 24 * 5  # 5 days
 register_adapter(dict, Json)
 
 
