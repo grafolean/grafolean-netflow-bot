@@ -18,7 +18,7 @@ import psycopg2.extras
 from colors import color
 
 from lookup import PROTOCOLS
-from dbutils import migrate_if_needed, get_db_cursor, DB_PREFIX
+from dbutils import migrate_if_needed, get_db_cursor, DB_PREFIX, S_PER_PARTITION
 from lookup import DIRECTION_INGRESS
 
 
@@ -86,7 +86,7 @@ def process_named_pipe(named_pipe_filename):
 
     templates = {}
     last_record_seqs = {}
-    last_day_seq = None
+    last_partition_no = None
     buffer = []  # we merge together writes to DB
     MAX_BUFFER_SIZE = 5
     while True:
@@ -105,11 +105,11 @@ def process_named_pipe(named_pipe_filename):
 
                     # sequence number of the (24h) day from UNIX epoch helps us determine the
                     # DB partition we are working with:
-                    day_seq = int(ts // (24 * 3600))
-                    if day_seq != last_day_seq:
-                        write_buffer(buffer, last_day_seq)
-                        ensure_flow_table_partition_exists(day_seq)
-                        last_day_seq = day_seq
+                    partition_no = int(ts // S_PER_PARTITION)
+                    if partition_no != last_partition_no:
+                        write_buffer(buffer, last_partition_no)
+                        ensure_flow_table_partition_exists(partition_no)
+                        last_partition_no = partition_no
 
                     try:
                         export = parse_packet(data, templates)
@@ -126,7 +126,7 @@ def process_named_pipe(named_pipe_filename):
                         # append the record to a buffer and write to DB when buffer is full enough:
                         buffer.append((ts, client_ip, export,))
                         if len(buffer) > MAX_BUFFER_SIZE:
-                            write_buffer(buffer, day_seq)
+                            write_buffer(buffer, partition_no)
                             buffer = []
                     except UnknownNetFlowVersion:
                         log.warning("Unknown NetFlow version")
@@ -141,18 +141,18 @@ def process_named_pipe(named_pipe_filename):
 
 
 # Based on timestamp, make sure that the partition exists:
-def ensure_flow_table_partition_exists(day_seq):
-    day_start = day_seq * (24 * 3600)
-    day_end = day_start + (24 * 3600)
+def ensure_flow_table_partition_exists(partition_no):
+    ts_start = partition_no * S_PER_PARTITION
+    ts_end = ts_start + S_PER_PARTITION
     with get_db_cursor() as c:
         # "When creating a range partition, the lower bound specified with FROM is an inclusive bound, whereas
         #  the upper bound specified with TO is an exclusive bound."
         # https://www.postgresql.org/docs/12/sql-createtable.html
-        c.execute(f"CREATE UNLOGGED TABLE IF NOT EXISTS {DB_PREFIX}flows_{day_seq} PARTITION OF {DB_PREFIX}flows FOR VALUES FROM ({day_start}) TO ({day_end})")
-        return day_seq
+        c.execute(f"CREATE UNLOGGED TABLE IF NOT EXISTS {DB_PREFIX}flows_{partition_no} PARTITION OF {DB_PREFIX}flows FOR VALUES FROM ({ts_start}) TO ({ts_end})")
+        return partition_no
 
 
-def write_buffer(buffer, day_seq):
+def write_buffer(buffer, partition_no):
     # {
     #   "DST_AS": 0,
     #   "SRC_AS": 0,
@@ -179,7 +179,7 @@ def write_buffer(buffer, day_seq):
     # https://www.cisco.com/en/US/technologies/tk648/tk362/technologies_white_paper09186a00800a3db9.html#wp9001622
 
 
-    log.debug(f"Writing {len(buffer)} records to DB for day {day_seq}")
+    log.debug(f"Writing {len(buffer)} records to DB, partition {partition_no}")
     # save each of the flows within the record, but use execute_values() to perform bulk insert:
     def _get_data(buffer):
         for ts, client_ip, export in buffer:
@@ -228,7 +228,7 @@ def write_buffer(buffer, day_seq):
                         # "OUTPUT_SNMP":
                         f.data["OUTPUT"],
                         # netflow v5 IP addresses are decoded to integers, which is less suitable for us - pack
-                        # them back to bytes and transform them to strings:
+                        # them back to bytes:
                         # "IPV4_DST_ADDR":
                         struct.pack('!I', f.data["IPV4_DST_ADDR"]),
                         # "IPV4_SRC_ADDR":
