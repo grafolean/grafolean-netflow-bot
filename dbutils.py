@@ -22,8 +22,8 @@ log = logging.getLogger("{}.{}".format(__name__, "dbutils"))
 
 db_pool = None
 DB_PREFIX = 'netflow_'
-S_PER_PARTITION = 3600
-LEAVE_N_PAST_PARTITIONS = 24 * 5  # 5 days
+S_PER_PARTITION = 600
+LEAVE_N_PAST_PARTITIONS = 6 * 24 * 5  # 5 days
 
 
 # https://medium.com/@thegavrikstory/manage-raw-database-connection-pool-in-flask-b11e50cbad3
