@@ -66,8 +66,8 @@ services:
     # This process collects NetFlow data and writes it to a shared named pipe. The
     # reason is that there is a Docker bug which causes UDP packets to change the source
     # IP if processed within the Docker network. To avoid that, we have a collector
-    # listening on host network interface, then transferring the JSON-encoded data
-    # to a "writer" process within the network, which writes the data to DB.
+    # listening on host network interface, then transferring the data to a "writer"
+    # process within the network, which writes the data to DB.
     image: grafolean/grafolean-netflow-bot
     container_name: grafolean-netflow-collector
     depends_on:

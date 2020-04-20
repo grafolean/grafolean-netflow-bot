@@ -8,8 +8,7 @@ import json
 
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
-from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT, register_adapter
-from psycopg2.extras import Json
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 IS_DEBUG = os.environ.get('DEBUG', 'false') in ['true', 'yes', '1']
 logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
@@ -25,7 +24,6 @@ db_pool = None
 DB_PREFIX = 'netflow_'
 S_PER_PARTITION = 3600
 LEAVE_N_PAST_PARTITIONS = 24 * 5  # 5 days
-register_adapter(dict, Json)
 
 
 # https://medium.com/@thegavrikstory/manage-raw-database-connection-pool-in-flask-b11e50cbad3
