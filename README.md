@@ -34,10 +34,13 @@ Requirements: `docker` and `docker-compose`.
     ```
     $ mkdir ~/netflow
     $ cd ~/netflow
-    $ wget https://github.com/grafolean/grafolean-netflow-bot/raw/master/docker-compose.yml
+    $ curl https://github.com/grafolean/grafolean-netflow-bot/raw/master/docker-compose.yml > docker-compose.yml
     ```
 
-2) save [.env.example](https://github.com/grafolean/grafolean-netflow-bot/raw/master/.env.example) to `.env` and edit it:
+3) save [.env.example](https://raw.githubusercontent.com/grafolean/grafolean-netflow-bot/master/.env.example) to `.env` and edit it:
+    ```
+    $ curl https://raw.githubusercontent.com/grafolean/grafolean-netflow-bot/master/.env.example > .env
+    ```
     - mandatory: `BACKEND_URL` (set to the URL of Grafolean backend, for example `https://grafolean.com/api`),
     - mandatory: `BOT_TOKEN` (set to the bot token from step 1),
     - mandatory: `DB_DIR` (directory to which the database with non-aggregated results is saved),
