@@ -95,7 +95,55 @@ def job_maint_remove_old_partitions(*args, **kwargs):
                 c.execute(f"DROP TABLE {tablename};")
             else:
                 log.info(f"MAINT: Leaving {tablename} (today is {today_seq})")
-    log.info("MAINT: Maintenance finished.")
+    log.info("MAINT: Maintenance finished (removing old partitions).")
+
+
+def job_maint_suggest_entities(*args, **job_params):
+    log.info("MAINT: Maintenance started - making suggestions for device entities")
+
+    backend_url = job_params['backend_url']
+    bot_token = job_params['bot_token']
+    requests_session = requests.Session()
+
+    # for each account, add any new netflow exporters (entities) that might not exist yet:
+    # find all the accounts we have access to:
+    r = requests_session.get(f'{backend_url}/accounts/?b={bot_token}')
+    if r.status_code != 200:
+        raise Exception("Invalid bot token or network error, got status {} while retrieving {}/accounts".format(r.status_code, backend_url))
+    j = r.json()
+    accounts_ids = [a["id"] for a in j["list"]]
+
+    # find all entities for each of the accounts:
+    for account_id in accounts_ids:
+        r = requests_session.get('{}/accounts/{}/entities/?b={}'.format(backend_url, account_id, bot_token))
+        if r.status_code != 200:
+            raise Exception("Network error, got status {} while retrieving {}/accounts/{}/entities".format(r.status_code, backend_url, account_id))
+        j = r.json()
+        entities_ips = [e["details"]["ipv4"] for e in j["list"] if e["entity_type"] == "device"]
+
+        with get_db_cursor() as c:
+            # Ideally, we would just run "select distinct(client_ip) from netflow_flows;", but unfortunately
+            # I was unable to find a performant way to run this query. So we are using netflow_exporters:
+            c.execute(f"SELECT ip FROM {DB_PREFIX}exporters;")
+            for client_ip, in c.fetchall():
+                if client_ip in entities_ips:
+                    log.info(f"MAINT: We already know exporter [{client_ip}]")
+                    continue
+
+                log.info(f"MAINT: Unknown exporter found, inserting [{client_ip}] to account [{account_id}]")
+                url = f'{backend_url}/accounts/{account_id}/entities/?b={bot_token}'
+                params = {
+                    "name": f'{client_ip} (NetFlow exporter)',
+                    "entity_type": "device",
+                    "details": {
+                        "ipv4": client_ip,
+                    },
+                }
+                r = requests_session.post(url, json=params)
+                if r.status_code > 299:
+                    raise Exception("Network error, got status {} while posting to {}/accounts/{}/entities: {}".format(r.status_code, backend_url, account_id, r.content))
+
+    log.info("MAINT: Maintenance finished (device entities suggestions).")
 
 
 class NetFlowBot(Collector):
@@ -104,6 +152,14 @@ class NetFlowBot(Collector):
         # remove old partitions:
         job_id = 'maint/remove_old_data'
         yield job_id, [3600], job_maint_remove_old_partitions, {}, 50
+
+        # suggest new netflow exporters / entities:
+        job_id = f'maint/suggest_entities'
+        job_params = {
+            "backend_url": self.backend_url,
+            "bot_token": self.bot_token,
+        }
+        yield job_id, [2*60], job_maint_suggest_entities, job_params, 10
 
         # first merge together entity infos so that those entities from the same account are together:
         accounts_infos = defaultdict(list)
@@ -157,6 +213,8 @@ class NetFlowBot(Collector):
         if last_used_ts is None:
             log.info(f"Counter was not yet initialized for job {job_id}, skipping.")
             return
+
+        # WATCH OUT! This hack changes all of the units from Bps to B! (should be cleaned up)
         #time_between = float(max_ts - last_used_ts)
         time_between = 1  # we want to use bytes as unit, not bytes per second
 

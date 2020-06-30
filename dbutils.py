@@ -150,3 +150,7 @@ def migration_step_2():
         c.execute(f'CREATE INDEX {DB_PREFIX}flows_ts on {DB_PREFIX}flows (ts);')
 
         c.execute(f'CREATE TABLE {DB_PREFIX}bot_jobs (job_id TEXT NOT NULL PRIMARY KEY, last_used_ts NUMERIC(16,6) NOT NULL);')
+
+def migration_step_3():
+    with get_db_cursor() as c:
+        c.execute(f'CREATE TABLE {DB_PREFIX}exporters (ip INET NOT NULL PRIMARY KEY);')

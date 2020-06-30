@@ -88,6 +88,7 @@ def process_named_pipe(named_pipe_filename):
     last_record_seqs = {}
     last_partition_no = None
     buffer = []  # we merge together writes to DB
+    known_exporters = set()
     MAX_BUFFER_SIZE = 5
     while True:
         with open(named_pipe_filename, "rb") as fp:
@@ -102,6 +103,12 @@ def process_named_pipe(named_pipe_filename):
                     data_b64, ts, client = json.loads(line)
                     client_ip, _ = client
                     data = base64.b64decode(data_b64)
+
+                    # if client_ip doesn't exist yet, mark it as unknown so that we can advise user to add it:
+                    if client_ip not in known_exporters:
+                        ensure_exporter(client_ip)
+                        known_exporters.add(client_ip)
+                        log.warning(f"[{client_ip}] New exporter!")
 
                     # sequence number of the (24h) day from UNIX epoch helps us determine the
                     # DB partition we are working with:
@@ -147,9 +154,16 @@ def ensure_flow_table_partition_exists(partition_no):
     with get_db_cursor() as c:
         # "When creating a range partition, the lower bound specified with FROM is an inclusive bound, whereas
         #  the upper bound specified with TO is an exclusive bound."
+        # PARTITION OF: "Any indexes, constraints and user-defined row-level triggers that exist in the parent
+        #  table are cloned on the new partition."
         # https://www.postgresql.org/docs/12/sql-createtable.html
         c.execute(f"CREATE UNLOGGED TABLE IF NOT EXISTS {DB_PREFIX}flows_{partition_no} PARTITION OF {DB_PREFIX}flows FOR VALUES FROM ({ts_start}) TO ({ts_end})")
         return partition_no
+
+
+def ensure_exporter(client_ip):
+    with get_db_cursor() as c:
+        c.execute(f"INSERT INTO {DB_PREFIX}exporters (ip) VALUES (%s) ON CONFLICT DO NOTHING;", (client_ip,))
 
 
 def write_buffer(buffer, partition_no):
