@@ -282,7 +282,7 @@ class NetFlowBot(Collector):
         # returns cumulative traffic for the whole entity, and traffic per interface for this entity
         with get_db_cursor() as c:
 
-            c.execute(f"""
+            sql = f"""
                 SELECT
                     f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'},
                     sum(f.in_bytes)
@@ -295,15 +295,23 @@ class NetFlowBot(Collector):
                     f.direction = %s
                 GROUP BY
                     f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'}
-            """, (entity_ip, last_used_ts, max_ts, direction))
+            """
+            c.execute(sql, (entity_ip, last_used_ts, max_ts, direction))
 
             values = []
             sum_traffic = 0
             for if_index, traffic_bytes in c.fetchall():
                 output_path = NetFlowBot.construct_output_path_prefix(interval_label, direction, entity_id, interface=if_index)
+                v = traffic_bytes / time_between
+                if v < 0:
+                    # invalid condition - to find the cause we need some additional logging:
+                    log.error(f"Sum of positive numbers should never be negative! " +
+                        "{v} {traffic_bytes} {time_between} {sql} {entity_ip} {last_used_ts} {max_ts} {direction}")
+                    continue  # this is never ok - skip this value
+
                 values.append({
                     'p': output_path,
-                    'v': traffic_bytes / time_between,
+                    'v': v,
                 })
                 sum_traffic += traffic_bytes
 
