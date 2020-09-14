@@ -478,7 +478,8 @@ class NetFlowBot(Collector):
 
             output_path_entity = NetFlowBot.construct_output_path_prefix(interval_label, direction, entity_id, interface=None)
             for protocol, traffic_bytes in c.fetchall():
-                output_path = f"{output_path_entity}.topprotocol.{path_part_encode(PROTOCOLS[protocol])}"
+                protocol_label = PROTOCOLS[protocol] if protocol in PROTOCOLS else f"proto{protocol}"
+                output_path = f"{output_path_entity}.topprotocol.{path_part_encode(protocol_label)}"
                 values.append({
                     'p': output_path,
                     'v': traffic_bytes / time_between,  # Bps
