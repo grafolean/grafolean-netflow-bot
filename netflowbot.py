@@ -305,8 +305,8 @@ class NetFlowBot(Collector):
                 v = traffic_bytes / time_between
                 if v < 0:
                     # invalid condition - to find the cause we need some additional logging:
-                    log.error(f"Sum of positive numbers should never be negative! " +
-                        "{v} {traffic_bytes} {time_between} {sql} {entity_ip} {last_used_ts} {max_ts} {direction}")
+                    log.error("Sum of positive numbers should never be negative! " +
+                        f"{v} {traffic_bytes} {time_between} {sql} {entity_ip} {last_used_ts} {max_ts} {direction}")
                     continue  # this is never ok - skip this value
 
                 values.append({
