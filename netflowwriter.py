@@ -57,7 +57,7 @@ def _pgwriter_write(pgwriter, ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_D
         11,  # number of columns
         4, int(ts),                       # integer - beware of Y2038 problem! :)
         8, IPV4_PREFIX, socket.inet_aton(client_ip),   # 4 bytes prefix + 4 bytes IP
-        4, IN_BYTES,                      # integer
+        8, IN_BYTES,                      # bigint
         2, PROTOCOL,
         2, DIRECTION,
         4, L4_DST_PORT,

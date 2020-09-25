@@ -154,3 +154,8 @@ def migration_step_2():
 def migration_step_3():
     with get_db_cursor() as c:
         c.execute(f'CREATE TABLE {DB_PREFIX}exporters (ip INET NOT NULL PRIMARY KEY);')
+
+def migration_step_4():
+    with get_db_cursor() as c:
+        # INTEGER (signed 32 bits) is not enough for in_bytes:
+        c.execute(f"ALTER TABLE {DB_PREFIX}flows ALTER COLUMN in_bytes SET DATA TYPE BIGINT;")
