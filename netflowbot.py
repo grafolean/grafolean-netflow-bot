@@ -255,6 +255,10 @@ class NetFlowBot(Collector):
             log.warning("No values found to be sent to Grafolean")
             return
 
+        # the values are Decimals because they come from BIGINT column, so we must transform
+        # them to strings before encoding to JSON:
+        values = [{'p': v['p'], 'v': str(v['v'])} for v in values]
+
         # send the data to Grafolean:
         send_results_to_grafolean(
             job_params['backend_url'],
