@@ -53,7 +53,7 @@ def _pgwriter_init():
 
 
 def _pgwriter_write(pgwriter, ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, IPV4_DST_ADDR, IPV4_SRC_ADDR):
-    buf = struct.pack('!HiIi4s4siIiHiHiIiIiHiHi4s4si4s4s',
+    buf = struct.pack('!HiIi4s4siQiHiHiIiIiHiHi4s4si4s4s',
         11,  # number of columns
         4, int(ts),                       # integer - beware of Y2038 problem! :)
         8, IPV4_PREFIX, socket.inet_aton(client_ip),   # 4 bytes prefix + 4 bytes IP
