@@ -208,7 +208,7 @@ def write_buffer(buffer, partition_no):
                         # "PROTOCOL":
                         f.data["PROTOCOL"],
                         # "DIRECTION":
-                        f.data["DIRECTION"],
+                        f.data.get("DIRECTION", DIRECTION_INGRESS),
                         # "L4_DST_PORT":
                         f.data["L4_DST_PORT"],
                         # "L4_SRC_PORT":
