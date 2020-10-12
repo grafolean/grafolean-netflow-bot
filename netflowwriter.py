@@ -194,6 +194,7 @@ def write_buffer(buffer, partition_no):
 
 
     log.debug(f"Writing {len(buffer)} records to DB, partition {partition_no}")
+    ipv6_ignored_records = 0  # we don't support IPv6 yet
     # save each of the flows within the record, but use execute_values() to perform bulk insert:
     def _get_data(buffer):
         for ts, client_ip, export in buffer:
@@ -201,6 +202,10 @@ def write_buffer(buffer, partition_no):
             if netflow_version == 9:
                 for f in flows:
                     try:
+                        if f.data.get("IP_PROTOCOL_VERSION", 4) == 6:
+                            ipv6_ignored_records += 1
+                            continue
+
                         yield (
                             ts,
                             client_ip,
@@ -224,7 +229,7 @@ def write_buffer(buffer, partition_no):
                             socket.inet_aton(f.data["IPV4_SRC_ADDR"]),
                         )
                     except KeyError:
-                        log.exception(f"[{client_ip}] Error decoding v9 flow, some data was missing. Contents: {repr(f.data)}")
+                        log.exception(f"[{client_ip}] Error decoding v9 flow. Contents: {repr(f.data)}")
             elif netflow_version == 5:
                 for f in flows:
                     try:
@@ -253,7 +258,7 @@ def write_buffer(buffer, partition_no):
                             struct.pack('!I', f.data["IPV4_SRC_ADDR"]),
                         )
                     except KeyError:
-                        log.exception(f"[{client_ip}] Error decoding v5 flow, some data was missing. Contents: {repr(f.data)}")
+                        log.exception(f"[{client_ip}] Error decoding v5 flow. Contents: {repr(f.data)}")
             else:
                 log.error(f"[{client_ip}] Only Netflow v5 and v9 currently supported, ignoring record (version: [{export.header.version}])")
 
@@ -261,6 +266,9 @@ def write_buffer(buffer, partition_no):
     for data in _get_data(buffer):
         _pgwriter_write(pgwriter, *data)
     _pgwriter_finish(pgwriter)
+
+    if ipv6_ignored_records > 0:
+        log.error(f"We do not support IPv6 (yet), some IPv6 flow records were ignored: {ipv6_ignored_records}")
 
 
 if __name__ == "__main__":
