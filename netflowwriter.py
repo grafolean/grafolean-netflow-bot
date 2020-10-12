@@ -41,9 +41,13 @@ log = logging.getLogger("{}.{}".format(__name__, "writer"))
 # 11-byte signature (constructed in this way to detect possible mangled bytes), flags, header extension
 # https://www.postgresql.org/docs/9.0/sql-copy.html#AEN59377
 PG_COPYFROM_INIT = struct.pack('!11sII', b'PGCOPY\n\377\r\n\0', 0, 0)
-# 4-byte INETv4 prefix: family, netmask, is_cidr, n bytes
+# 4-byte INETv4/v6 prefix: family, netmask, is_cidr, n bytes
 # https://doxygen.postgresql.org/network_8c_source.html#l00193
-IPV4_PREFIX = struct.pack('!BBBB', socket.AF_INET, 32, 0, 4)
+IPV4_ADDRESS_PREFIX = struct.pack('!BBBB', socket.AF_INET, 32, 0, 4)
+# Gotcha: IPv6 address family in Postgres is *not* socket.AF_INET6 (10),
+# instead it is defined as socket.AF_INET + 1 (2 + 1 == 3)
+# https://doxygen.postgresql.org/utils_2inet_8h_source.html#l00040
+IPV6_ADDRESS_PREFIX = struct.pack('!BBBB', socket.AF_INET + 1, 128, 0, 16)
 
 
 def _pgwriter_init():
@@ -52,11 +56,11 @@ def _pgwriter_init():
     return pg_writer
 
 
-def _pgwriter_write(pgwriter, ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, IPV4_DST_ADDR, IPV4_SRC_ADDR):
-    buf = struct.pack('!HiIi4s4siQiHiHiIiIiHiHi4s4si4s4s',
+def _pgwriter_write(pgwriter, ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, address_family, IPVx_DST_ADDR, IPVx_SRC_ADDR):
+    buf = struct.pack('!HiIi4s4siQiHiHiIiIiHiH',
         11,  # number of columns
         4, int(ts),                       # integer - beware of Y2038 problem! :)
-        8, IPV4_PREFIX, socket.inet_aton(client_ip),   # 4 bytes prefix + 4 bytes IP
+        8, IPV4_ADDRESS_PREFIX, socket.inet_aton(client_ip),   # 4 bytes prefix + 4 bytes IP
         8, IN_BYTES,                      # bigint
         2, PROTOCOL,
         2, DIRECTION,
@@ -64,10 +68,18 @@ def _pgwriter_write(pgwriter, ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_D
         4, L4_SRC_PORT,
         2, INPUT_SNMP,
         2, OUTPUT_SNMP,
-        8, IPV4_PREFIX, IPV4_DST_ADDR,
-        8, IPV4_PREFIX, IPV4_SRC_ADDR,
     )
-    pgwriter.write(buf)
+    if address_family == socket.AF_INET6:
+        buf2 = struct.pack('!i4s4si4s4s',
+            8, IPV4_ADDRESS_PREFIX, IPVx_DST_ADDR,
+            8, IPV4_ADDRESS_PREFIX, IPVx_SRC_ADDR,
+        )
+    else:
+        buf2 = struct.pack('!i4s16si4s16s',
+            4 + 16, IPV6_ADDRESS_PREFIX, IPVx_DST_ADDR,
+            4 + 16, IPV6_ADDRESS_PREFIX, IPVx_SRC_ADDR,
+        )
+    pgwriter.write(buf + buf2)
 
 
 def _pgwriter_finish(pgwriter):
@@ -138,9 +150,8 @@ def process_named_pipe(named_pipe_filename):
                     except UnknownNetFlowVersion:
                         log.warning("Unknown NetFlow version")
                         continue
-                    except TemplateNotRecognized:
-                        log.warning("Failed to decode a v9 ExportPacket, template not "
-                            "recognized (if this happens at the start, it's ok)")
+                    except TemplateNotRecognized as ex:
+                        log.warning(f"Failed to decode a v9 ExportPacket, template not recognized (if this happens at the start, it's ok). Template id: {ex.template_id}")
                         continue
 
                 except Exception as ex:
@@ -194,7 +205,6 @@ def write_buffer(buffer, partition_no):
 
 
     log.debug(f"Writing {len(buffer)} records to DB, partition {partition_no}")
-    ipv6_ignored_records = 0  # we don't support IPv6 yet
     # save each of the flows within the record, but use execute_values() to perform bulk insert:
     def _get_data(buffer):
         for ts, client_ip, export in buffer:
@@ -202,31 +212,27 @@ def write_buffer(buffer, partition_no):
             if netflow_version == 9:
                 for f in flows:
                     try:
-                        if f.data.get("IP_PROTOCOL_VERSION", 4) == 6:
-                            ipv6_ignored_records += 1
-                            continue
+                        # if f.data.get("IP_PROTOCOL_VERSION", 4) == 6:
+                        if not f.data.get("IPV6_DST_ADDR", None) is None:
+                            address_family = socket.AF_INET6
+                            ipvX = "IPV6"
+                        else:
+                            address_family = socket.AF_INET
+                            ipvX = "IPV4"
 
                         yield (
                             ts,
                             client_ip,
-                            # "IN_BYTES":
                             f.data["IN_BYTES"],
-                            # "PROTOCOL":
                             f.data["PROTOCOL"],
-                            # "DIRECTION":
                             f.data.get("DIRECTION", DIRECTION_INGRESS),
-                            # "L4_DST_PORT":
                             f.data["L4_DST_PORT"],
-                            # "L4_SRC_PORT":
                             f.data["L4_SRC_PORT"],
-                            # "INPUT_SNMP":
                             f.data["INPUT_SNMP"],
-                            # "OUTPUT_SNMP":
                             f.data["OUTPUT_SNMP"],
-                            # "IPV4_DST_ADDR":
-                            socket.inet_aton(f.data["IPV4_DST_ADDR"]),
-                            # "IPV4_SRC_ADDR":
-                            socket.inet_aton(f.data["IPV4_SRC_ADDR"]),
+                            address_family,
+                            socket.inet_pton(address_family, f.data[f"{ipvX}_DST_ADDR"]),
+                            socket.inet_pton(address_family, f.data[f"{ipvX}_SRC_ADDR"]),
                         )
                     except KeyError:
                         log.exception(f"[{client_ip}] Error decoding v9 flow. Contents: {repr(f.data)}")
@@ -250,6 +256,8 @@ def write_buffer(buffer, partition_no):
                             f.data["INPUT"],
                             # "OUTPUT_SNMP":
                             f.data["OUTPUT"],
+                            # address_family is always IPv4:
+                            socket.AF_INET,
                             # netflow v5 IP addresses are decoded to integers, which is less suitable for us - pack
                             # them back to bytes:
                             # "IPV4_DST_ADDR":
@@ -266,9 +274,6 @@ def write_buffer(buffer, partition_no):
     for data in _get_data(buffer):
         _pgwriter_write(pgwriter, *data)
     _pgwriter_finish(pgwriter)
-
-    if ipv6_ignored_records > 0:
-        log.error(f"We do not support IPv6 (yet), some IPv6 flow records were ignored: {ipv6_ignored_records}")
 
 
 if __name__ == "__main__":

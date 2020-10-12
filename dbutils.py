@@ -159,3 +159,9 @@ def migration_step_4():
     with get_db_cursor() as c:
         # INTEGER (signed 32 bits) is not enough for in_bytes:
         c.execute(f"ALTER TABLE {DB_PREFIX}flows ALTER COLUMN in_bytes SET DATA TYPE BIGINT;")
+
+def migration_step_5():
+    """ We want to save IPv6 addresses too """
+    with get_db_cursor() as c:
+        c.execute(f"ALTER TABLE {DB_PREFIX}flows RENAME COLUMN ipv4_dst_addr TO ipvX_dst_addr;")
+        c.execute(f"ALTER TABLE {DB_PREFIX}flows RENAME COLUMN ipv4_src_addr TO ipvX_src_addr;")

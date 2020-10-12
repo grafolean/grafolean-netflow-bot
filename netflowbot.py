@@ -50,7 +50,7 @@ def slow_down(func):
 
 
 def path_part_encode(s):
-    return s.replace(".", '%2e')
+    return s.replace(".", '%2e').replace(":", '%3a')
 
 
 def _get_last_used_ts(job_id):
@@ -195,8 +195,8 @@ class NetFlowBot(Collector):
         #   l4_src_port   | integer       | source port
         #   input_snmp    | smallint      | input interface index
         #   output_snmp   | smallint      | output interface index
-        #   ipv4_dst_addr | inet          | source IP
-        #   ipv4_src_addr | inet          | destination IP
+        #   ipvX_dst_addr | inet          | source IP
+        #   ipvX_src_addr | inet          | destination IP
 
         job_id = job_params["job_id"]
         interval_label = job_params["interval_label"]
@@ -348,7 +348,7 @@ class NetFlowBot(Collector):
             for interface_index, in c.fetchall():
                 c2.execute(f"""
                     SELECT
-                        f.{'ipv4_src_addr' if direction == DIRECTION_INGRESS else 'ipv4_dst_addr'},
+                        f.{'ipvX_src_addr' if direction == DIRECTION_INGRESS else 'ipvX_dst_addr'},
                         sum(f.in_bytes) "traffic"
                     FROM
                         {DB_PREFIX}flows "f"
@@ -359,7 +359,7 @@ class NetFlowBot(Collector):
                         f.direction = %s AND
                         f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'} = %s
                     GROUP BY
-                        f.{'ipv4_src_addr' if direction == DIRECTION_INGRESS else 'ipv4_dst_addr'}
+                        f.{'ipvX_src_addr' if direction == DIRECTION_INGRESS else 'ipvX_dst_addr'}
                     ORDER BY
                         traffic desc
                     LIMIT {TOP_N_MAX};
@@ -382,7 +382,7 @@ class NetFlowBot(Collector):
             values = []
             c.execute(f"""
                 SELECT
-                    f.{'ipv4_src_addr' if direction == DIRECTION_INGRESS else 'ipv4_dst_addr'},
+                    f.{'ipvX_src_addr' if direction == DIRECTION_INGRESS else 'ipvX_dst_addr'},
                     sum(f.in_bytes) "traffic"
                 FROM
                     {DB_PREFIX}flows "f"
@@ -392,7 +392,7 @@ class NetFlowBot(Collector):
                     f.ts <= %s AND
                     f.direction = %s
                 GROUP BY
-                    f.{'ipv4_src_addr' if direction == DIRECTION_INGRESS else 'ipv4_dst_addr'}
+                    f.{'ipvX_src_addr' if direction == DIRECTION_INGRESS else 'ipvX_dst_addr'}
                 ORDER BY
                     traffic desc
                 LIMIT {TOP_N_MAX};
@@ -499,7 +499,7 @@ class NetFlowBot(Collector):
             values = []
             c.execute(f"""
                 SELECT
-                    f.ipv4_src_addr, f.ipv4_dst_addr,
+                    f.ipvX_src_addr, f.ipvX_dst_addr,
                     sum(f.in_bytes) "traffic"
                 FROM
                     {DB_PREFIX}flows "f"
@@ -509,15 +509,15 @@ class NetFlowBot(Collector):
                     f.ts <= %s AND
                     f.direction = %s
                 GROUP BY
-                    f.ipv4_src_addr, f.ipv4_dst_addr
+                    f.ipvX_src_addr, f.ipvX_dst_addr
                 ORDER BY
                     traffic desc
                 LIMIT {TOP_N_MAX};
             """, (entity_ip, last_used_ts, max_ts, direction,))
 
             output_path_entity = NetFlowBot.construct_output_path_prefix(interval_label, direction, entity_id, interface=None)
-            for ipv4_src_addr, ipv4_dst_addr, traffic_bytes in c.fetchall():
-                output_path = f"{output_path_entity}.topconn.{path_part_encode(ipv4_src_addr)}.{path_part_encode(ipv4_dst_addr)}"
+            for ipvX_src_addr, ipvX_dst_addr, traffic_bytes in c.fetchall():
+                output_path = f"{output_path_entity}.topconn.{path_part_encode(ipvX_src_addr)}.{path_part_encode(ipvX_dst_addr)}"
                 values.append({
                     'p': output_path,
                     'v': traffic_bytes / time_between,  # Bps
