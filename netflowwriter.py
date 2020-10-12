@@ -200,54 +200,60 @@ def write_buffer(buffer, partition_no):
             netflow_version, flows = export.header.version, export.flows
             if netflow_version == 9:
                 for f in flows:
-                    yield (
-                        ts,
-                        client_ip,
-                        # "IN_BYTES":
-                        f.data["IN_BYTES"],
-                        # "PROTOCOL":
-                        f.data["PROTOCOL"],
-                        # "DIRECTION":
-                        f.data.get("DIRECTION", DIRECTION_INGRESS),
-                        # "L4_DST_PORT":
-                        f.data["L4_DST_PORT"],
-                        # "L4_SRC_PORT":
-                        f.data["L4_SRC_PORT"],
-                        # "INPUT_SNMP":
-                        f.data["INPUT_SNMP"],
-                        # "OUTPUT_SNMP":
-                        f.data["OUTPUT_SNMP"],
-                        # "IPV4_DST_ADDR":
-                        socket.inet_aton(f.data["IPV4_DST_ADDR"]),
-                        # "IPV4_SRC_ADDR":
-                        socket.inet_aton(f.data["IPV4_SRC_ADDR"]),
-                    )
+                    try:
+                        yield (
+                            ts,
+                            client_ip,
+                            # "IN_BYTES":
+                            f.data["IN_BYTES"],
+                            # "PROTOCOL":
+                            f.data["PROTOCOL"],
+                            # "DIRECTION":
+                            f.data.get("DIRECTION", DIRECTION_INGRESS),
+                            # "L4_DST_PORT":
+                            f.data["L4_DST_PORT"],
+                            # "L4_SRC_PORT":
+                            f.data["L4_SRC_PORT"],
+                            # "INPUT_SNMP":
+                            f.data["INPUT_SNMP"],
+                            # "OUTPUT_SNMP":
+                            f.data["OUTPUT_SNMP"],
+                            # "IPV4_DST_ADDR":
+                            socket.inet_aton(f.data["IPV4_DST_ADDR"]),
+                            # "IPV4_SRC_ADDR":
+                            socket.inet_aton(f.data["IPV4_SRC_ADDR"]),
+                        )
+                    except KeyError:
+                        log.exception(f"[{client_ip}] Error decoding v9 flow, some data was missing. Contents: {repr(f.data)}")
             elif netflow_version == 5:
                 for f in flows:
-                    yield (
-                        ts,
-                        client_ip,
-                        # "IN_BYTES":
-                        f.data["IN_OCTETS"],
-                        # "PROTOCOL":
-                        f.data["PROTO"],
-                        # "DIRECTION":
-                        DIRECTION_INGRESS,
-                        # "L4_DST_PORT":
-                        f.data["DST_PORT"],
-                        # "L4_SRC_PORT":
-                        f.data["SRC_PORT"],
-                        # "INPUT_SNMP":
-                        f.data["INPUT"],
-                        # "OUTPUT_SNMP":
-                        f.data["OUTPUT"],
-                        # netflow v5 IP addresses are decoded to integers, which is less suitable for us - pack
-                        # them back to bytes:
-                        # "IPV4_DST_ADDR":
-                        struct.pack('!I', f.data["IPV4_DST_ADDR"]),
-                        # "IPV4_SRC_ADDR":
-                        struct.pack('!I', f.data["IPV4_SRC_ADDR"]),
-                    )
+                    try:
+                        yield (
+                            ts,
+                            client_ip,
+                            # "IN_BYTES":
+                            f.data["IN_OCTETS"],
+                            # "PROTOCOL":
+                            f.data["PROTO"],
+                            # "DIRECTION":
+                            DIRECTION_INGRESS,
+                            # "L4_DST_PORT":
+                            f.data["DST_PORT"],
+                            # "L4_SRC_PORT":
+                            f.data["SRC_PORT"],
+                            # "INPUT_SNMP":
+                            f.data["INPUT"],
+                            # "OUTPUT_SNMP":
+                            f.data["OUTPUT"],
+                            # netflow v5 IP addresses are decoded to integers, which is less suitable for us - pack
+                            # them back to bytes:
+                            # "IPV4_DST_ADDR":
+                            struct.pack('!I', f.data["IPV4_DST_ADDR"]),
+                            # "IPV4_SRC_ADDR":
+                            struct.pack('!I', f.data["IPV4_SRC_ADDR"]),
+                        )
+                    except KeyError:
+                        log.exception(f"[{client_ip}] Error decoding v5 flow, some data was missing. Contents: {repr(f.data)}")
             else:
                 log.error(f"[{client_ip}] Only Netflow v5 and v9 currently supported, ignoring record (version: [{export.header.version}])")
 
