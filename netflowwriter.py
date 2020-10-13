@@ -69,7 +69,7 @@ def _pgwriter_write(pgwriter, ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_D
         2, INPUT_SNMP,
         2, OUTPUT_SNMP,
     )
-    if address_family == socket.AF_INET6:
+    if address_family != socket.AF_INET6:
         buf2 = struct.pack('!i4s4si4s4s',
             8, IPV4_ADDRESS_PREFIX, IPVx_DST_ADDR,
             8, IPV4_ADDRESS_PREFIX, IPVx_SRC_ADDR,
@@ -215,10 +215,12 @@ def write_buffer(buffer, partition_no):
                         # if f.data.get("IP_PROTOCOL_VERSION", 4) == 6:
                         if not f.data.get("IPV6_DST_ADDR", None) is None:
                             address_family = socket.AF_INET6
-                            ipvX = "IPV6"
+                            dst = socket.inet_pton(address_family, f.data["IPV6_DST_ADDR"])
+                            src = socket.inet_pton(address_family, f.data["IPV6_SRC_ADDR"])
                         else:
                             address_family = socket.AF_INET
-                            ipvX = "IPV4"
+                            dst = socket.inet_aton(f.data["IPV4_DST_ADDR"])
+                            src = socket.inet_aton(f.data["IPV4_SRC_ADDR"])
 
                         yield (
                             ts,
@@ -231,8 +233,8 @@ def write_buffer(buffer, partition_no):
                             f.data["INPUT_SNMP"],
                             f.data["OUTPUT_SNMP"],
                             address_family,
-                            socket.inet_pton(address_family, f.data[f"{ipvX}_DST_ADDR"]),
-                            socket.inet_pton(address_family, f.data[f"{ipvX}_SRC_ADDR"]),
+                            dst,
+                            src,
                         )
                     except KeyError:
                         log.exception(f"[{client_ip}] Error decoding v9 flow. Contents: {repr(f.data)}")
