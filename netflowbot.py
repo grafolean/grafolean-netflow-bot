@@ -14,7 +14,7 @@ import dotenv
 import requests
 
 from grafoleancollector import Collector, send_results_to_grafolean
-from dbutils import get_db_cursor, DB_PREFIX, S_PER_PARTITION, LEAVE_N_PAST_PARTITIONS
+from dbutils import get_db_cursor, DB_PREFIX, LEAVE_N_PAST_DAYS
 from lookup import PROTOCOLS, DIRECTION_INGRESS, DIRECTION_EGRESS
 
 logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
@@ -76,26 +76,11 @@ def _save_current_max_ts(job_id, max_ts):
         c.execute(f"INSERT INTO {DB_PREFIX}bot_jobs (job_id, last_used_ts) VALUES (%s, %s) ON CONFLICT (job_id) DO UPDATE SET last_used_ts = %s;", (job_id, max_ts, max_ts))
 
 
-def job_maint_remove_old_partitions(*args, **kwargs):
+def job_maint_remove_old_data(*args, **kwargs):
+    log.info("MAINT: Maintenance started - removing old data")
     with get_db_cursor() as c:
-        log.info("MAINT: Maintenance started - removing old partitions")
-        today_seq = int(time.time() // S_PER_PARTITION)
-        c.execute(f"SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE '{DB_PREFIX}flows_%';")
-        for tablename, in c.fetchall():
-            m = re.match(f'^{DB_PREFIX}flows_([0-9]+)$', tablename)
-            if not m:
-                log.warning(f"MAINT: Table {tablename} does not match regex, skipping")
-                continue
-            day_seq = int(m.group(1))
-            if day_seq > today_seq:
-                log.warning(f"MAINT: CAREFUL! Table {tablename} marks a future day (today is {today_seq}); this should never happen! Skipping.")
-                continue
-            if day_seq < today_seq - LEAVE_N_PAST_PARTITIONS:
-                log.info(f"MAINT: Removing old data: {tablename} (today is {today_seq})")
-                c.execute(f"DROP TABLE {tablename};")
-            else:
-                log.info(f"MAINT: Leaving {tablename} (today is {today_seq})")
-    log.info("MAINT: Maintenance finished (removing old partitions).")
+        c.execute(f"SELECT drop_chunks(INTERVAL '{LEAVE_N_PAST_DAYS} days', '{DB_PREFIX}flows2');")
+    log.info("MAINT: Maintenance finished (removing old data).")
 
 
 def job_maint_suggest_entities(*args, **job_params):
@@ -149,9 +134,9 @@ def job_maint_suggest_entities(*args, **job_params):
 class NetFlowBot(Collector):
 
     def jobs(self):
-        # remove old partitions:
+        # remove old data:
         job_id = 'maint/remove_old_data'
-        yield job_id, [3600], job_maint_remove_old_partitions, {}, 50
+        yield job_id, [3600], job_maint_remove_old_data, {}, 50
 
         # suggest new netflow exporters / entities:
         job_id = f'maint/suggest_entities'
