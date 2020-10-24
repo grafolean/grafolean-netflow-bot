@@ -55,12 +55,12 @@ def path_part_encode(s):
 
 def _get_last_used_ts(job_id):
     with get_db_cursor() as c:
-        c.execute(f'SELECT j.last_used_ts FROM {DB_PREFIX}bot_jobs j WHERE j.job_id = %s;', (job_id,))
+        c.execute(f'SELECT j.last_used_ts FROM {DB_PREFIX}bot_jobs2 j WHERE j.job_id = %s;', (job_id,))
         rec = c.fetchone()
         if rec is None:
             return None
         last_used_ts, = rec
-        return int(last_used_ts)
+        return last_used_ts
 
 def _get_current_max_ts():
     with get_db_cursor() as c:
@@ -73,7 +73,7 @@ def _get_current_max_ts():
 
 def _save_current_max_ts(job_id, max_ts):
     with get_db_cursor() as c:
-        c.execute(f"INSERT INTO {DB_PREFIX}bot_jobs (job_id, last_used_ts) VALUES (%s, %s) ON CONFLICT (job_id) DO UPDATE SET last_used_ts = %s;", (job_id, max_ts, max_ts))
+        c.execute(f"INSERT INTO {DB_PREFIX}bot_jobs2 (job_id, last_used_ts) VALUES (%s, %s) ON CONFLICT (job_id) DO UPDATE SET last_used_ts = %s;", (job_id, max_ts, max_ts))
 
 
 def job_maint_remove_old_data(*args, **kwargs):
@@ -168,10 +168,10 @@ class NetFlowBot(Collector):
 
     @staticmethod
     def perform_account_aggr_job(*args, **job_params):
-        # \d netflow_flows
+        # \d netflow_flows2
         #      Column     |     Type      | Description
         #  ---------------+---------------+------------
-        #   ts            | numeric(16,6) | UNIX timestamp
+        #   ts            | timestamp     | time when flow was received by netflowcollector
         #   client_ip     | inet          | entity IP address
         #   in_bytes      | integer       | number of bytes associated with an IP Flow
         #   protocol      | smallint      | IP protocol (see lookup.py -> PROTOCOLS)

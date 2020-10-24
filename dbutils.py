@@ -189,3 +189,4 @@ def migration_step_6():
             );
         """)
         c.execute(f"SELECT create_hypertable('{DB_PREFIX}flows2', 'ts', chunk_time_interval => INTERVAL '1 hour');")
+        c.execute(f'CREATE TABLE {DB_PREFIX}bot_jobs2 (job_id TEXT NOT NULL PRIMARY KEY, last_used_ts TIMESTAMP NOT NULL);')
