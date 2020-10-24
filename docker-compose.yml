@@ -16,6 +16,9 @@ services:
     #   image: grafolean/grafolean-netflow-bot:v1.0.0
     image: grafolean/grafolean-netflow-bot
     container_name: grafolean-netflow-bot
+    build:
+      context: .
+      dockerfile: Dockerfile
     depends_on:
       db:
         condition: service_healthy
