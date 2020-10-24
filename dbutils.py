@@ -188,4 +188,4 @@ def migration_step_6():
                 ipvX_src_addr INET NOT NULL
             );
         """)
-        c.execute(f"SELECT create_hypertable('{DB_PREFIX}flows2', 'ts');")
+        c.execute(f"SELECT create_hypertable('{DB_PREFIX}flows2', 'ts', chunk_time_interval => INTERVAL '1 hour');")
