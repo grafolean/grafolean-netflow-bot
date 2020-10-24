@@ -165,3 +165,28 @@ def migration_step_5():
     with get_db_cursor() as c:
         c.execute(f"ALTER TABLE {DB_PREFIX}flows RENAME COLUMN ipv4_dst_addr TO ipvX_dst_addr;")
         c.execute(f"ALTER TABLE {DB_PREFIX}flows RENAME COLUMN ipv4_src_addr TO ipvX_src_addr;")
+
+def migration_step_6():
+    """ Create a new table for flows using TimescaleDB.
+        - we use a different name to avoid converting old data; the conversion is too slow to be done on existing
+          installations without manual work. For those we know about we can perform this operation manually.
+        - table is *not* unlogged (it is using WAL). If insert performance becomes an issue, we can change this later
+          using: "ALTER TABLE netflow_flows2 SET UNLOGGED;" (but at the moment we don't know that yet)
+    """
+    with get_db_cursor() as c:
+        c.execute(f"""
+            CREATE TABLE {DB_PREFIX}flows2 (
+                ts TIMESTAMP NOT NULL,
+                client_ip INET NOT NULL,
+                in_bytes BIGINT NOT NULL,
+                protocol SMALLINT NOT NULL,
+                direction SMALLINT NOT NULL,
+                l4_dst_port INTEGER NOT NULL,
+                l4_src_port INTEGER NOT NULL,
+                input_snmp SMALLINT NOT NULL,
+                output_snmp SMALLINT NOT NULL,
+                ipvX_dst_addr INET NOT NULL,
+                ipvX_src_addr INET NOT NULL
+            );
+        """)
+        c.execute(f"SELECT create_hypertable('{DB_PREFIX}flows2', 'ts');")

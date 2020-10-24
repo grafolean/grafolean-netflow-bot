@@ -18,7 +18,7 @@ import psycopg2.extras
 from colors import color
 
 from lookup import PROTOCOLS
-from dbutils import migrate_if_needed, get_db_cursor, DB_PREFIX, S_PER_PARTITION
+from dbutils import migrate_if_needed, get_db_cursor, DB_PREFIX
 from lookup import DIRECTION_INGRESS
 
 
@@ -41,6 +41,9 @@ log = logging.getLogger("{}.{}".format(__name__, "writer"))
 # 11-byte signature (constructed in this way to detect possible mangled bytes), flags, header extension
 # https://www.postgresql.org/docs/9.0/sql-copy.html#AEN59377
 PG_COPYFROM_INIT = struct.pack('!11sII', b'PGCOPY\n\377\r\n\0', 0, 0)
+# "To determine the appropriate binary format for the actual tuple data you should consult the PostgreSQL
+#  source, in particular the *send and *recv functions for each column's data type (typically these functions
+#  are found in the src/backend/utils/adt/ directory of the source distribution)."
 # 4-byte INETv4/v6 prefix: family, netmask, is_cidr, n bytes
 # https://doxygen.postgresql.org/network_8c_source.html#l00193
 IPV4_ADDRESS_PREFIX = struct.pack('!BBBB', socket.AF_INET, 32, 0, 4)
@@ -48,6 +51,8 @@ IPV4_ADDRESS_PREFIX = struct.pack('!BBBB', socket.AF_INET, 32, 0, 4)
 # instead it is defined as socket.AF_INET + 1 (2 + 1 == 3)
 # https://doxygen.postgresql.org/utils_2inet_8h_source.html#l00040
 IPV6_ADDRESS_PREFIX = struct.pack('!BBBB', socket.AF_INET + 1, 128, 0, 16)
+# Timestamp is encoded as signed number of microseconds from PG epoch
+PG_EPOCH_TIMESTAMP = 946684800  # 2020-01-01T00:00:00Z
 
 
 def _pgwriter_init():
@@ -57,9 +62,9 @@ def _pgwriter_init():
 
 
 def _pgwriter_write(pgwriter, ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, address_family, IPVx_DST_ADDR, IPVx_SRC_ADDR):
-    buf = struct.pack('!HiIi4s4siQiHiHiIiIiHiH',
+    buf = struct.pack('!Hiqi4s4siQiHiHiIiIiHiH',
         11,  # number of columns
-        4, int(ts),                       # integer - beware of Y2038 problem! :)
+        8, int(1000000 * (ts - PG_EPOCH_TIMESTAMP)), # https://doxygen.postgresql.org/backend_2utils_2adt_2timestamp_8c_source.html#l00228
         8, IPV4_ADDRESS_PREFIX, socket.inet_aton(client_ip),   # 4 bytes prefix + 4 bytes IP
         8, IN_BYTES,                      # bigint
         2, PROTOCOL,
@@ -86,7 +91,7 @@ def _pgwriter_finish(pgwriter):
     with get_db_cursor() as c:
         pgwriter.write(struct.pack('!h', -1))
         pgwriter.seek(0)
-        c.copy_expert(f"COPY {DB_PREFIX}flows FROM STDIN WITH BINARY", pgwriter)
+        c.copy_expert(f"COPY {DB_PREFIX}flows2 FROM STDIN WITH BINARY", pgwriter)
 
 
 def process_named_pipe(named_pipe_filename):
@@ -98,7 +103,6 @@ def process_named_pipe(named_pipe_filename):
 
     templates = {}
     last_record_seqs = {}
-    last_partition_no = None
     buffer = []  # we merge together writes to DB
     known_exporters = set()
     MAX_BUFFER_SIZE = 5
@@ -122,14 +126,6 @@ def process_named_pipe(named_pipe_filename):
                         known_exporters.add(client_ip)
                         log.warning(f"[{client_ip}] New exporter!")
 
-                    # sequence number of the (24h) day from UNIX epoch helps us determine the
-                    # DB partition we are working with:
-                    partition_no = int(ts // S_PER_PARTITION)
-                    if partition_no != last_partition_no:
-                        write_buffer(buffer, last_partition_no)
-                        ensure_flow_table_partition_exists(partition_no)
-                        last_partition_no = partition_no
-
                     try:
                         export = parse_packet(data, templates)
                         log.debug(f"[{client_ip}] Received record [{export.header.sequence}]: {datetime.utcfromtimestamp(ts)}")
@@ -145,7 +141,7 @@ def process_named_pipe(named_pipe_filename):
                         # append the record to a buffer and write to DB when buffer is full enough:
                         buffer.append((ts, client_ip, export,))
                         if len(buffer) > MAX_BUFFER_SIZE:
-                            write_buffer(buffer, partition_no)
+                            write_buffer(buffer)
                             buffer = []
                     except UnknownNetFlowVersion:
                         log.warning("Unknown NetFlow version")
@@ -158,26 +154,12 @@ def process_named_pipe(named_pipe_filename):
                     log.exception("Error writing line, skipping...")
 
 
-# Based on timestamp, make sure that the partition exists:
-def ensure_flow_table_partition_exists(partition_no):
-    ts_start = partition_no * S_PER_PARTITION
-    ts_end = ts_start + S_PER_PARTITION
-    with get_db_cursor() as c:
-        # "When creating a range partition, the lower bound specified with FROM is an inclusive bound, whereas
-        #  the upper bound specified with TO is an exclusive bound."
-        # PARTITION OF: "Any indexes, constraints and user-defined row-level triggers that exist in the parent
-        #  table are cloned on the new partition."
-        # https://www.postgresql.org/docs/12/sql-createtable.html
-        c.execute(f"CREATE UNLOGGED TABLE IF NOT EXISTS {DB_PREFIX}flows_{partition_no} PARTITION OF {DB_PREFIX}flows FOR VALUES FROM ({ts_start}) TO ({ts_end})")
-        return partition_no
-
-
 def ensure_exporter(client_ip):
     with get_db_cursor() as c:
         c.execute(f"INSERT INTO {DB_PREFIX}exporters (ip) VALUES (%s) ON CONFLICT DO NOTHING;", (client_ip,))
 
 
-def write_buffer(buffer, partition_no):
+def write_buffer(buffer):
     # {
     #   "DST_AS": 0,
     #   "SRC_AS": 0,
@@ -204,7 +186,7 @@ def write_buffer(buffer, partition_no):
     # https://www.cisco.com/en/US/technologies/tk648/tk362/technologies_white_paper09186a00800a3db9.html#wp9001622
 
 
-    log.debug(f"Writing {len(buffer)} records to DB, partition {partition_no}")
+    log.debug(f"Writing {len(buffer)} records to DB")
     # save each of the flows within the record, but use execute_values() to perform bulk insert:
     def _get_data(buffer):
         for ts, client_ip, export in buffer:
