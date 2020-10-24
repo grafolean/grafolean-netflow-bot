@@ -64,7 +64,7 @@ def _get_last_used_ts(job_id):
 
 def _get_current_max_ts():
     with get_db_cursor() as c:
-        c.execute(f"SELECT MAX(ts) FROM {DB_PREFIX}flows;")
+        c.execute(f"SELECT MAX(ts) FROM {DB_PREFIX}flows2;")
         rec = c.fetchone()
         if rec is None:
             return None
@@ -276,7 +276,7 @@ class NetFlowBot(Collector):
                     f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'},
                     sum(f.in_bytes)
                 FROM
-                    {DB_PREFIX}flows "f"
+                    {DB_PREFIX}flows2 "f"
                 WHERE
                     f.client_ip = %s AND
                     f.ts > %s AND
@@ -322,7 +322,7 @@ class NetFlowBot(Collector):
                 SELECT
                     distinct(f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'}) "interface_index"
                 FROM
-                    {DB_PREFIX}flows "f"
+                    {DB_PREFIX}flows2 "f"
                 WHERE
                     f.client_ip = %s AND
                     f.ts > %s AND
@@ -336,7 +336,7 @@ class NetFlowBot(Collector):
                         f.{'ipvX_src_addr' if direction == DIRECTION_INGRESS else 'ipvX_dst_addr'},
                         sum(f.in_bytes) "traffic"
                     FROM
-                        {DB_PREFIX}flows "f"
+                        {DB_PREFIX}flows2 "f"
                     WHERE
                         f.client_ip = %s AND
                         f.ts > %s AND
@@ -370,7 +370,7 @@ class NetFlowBot(Collector):
                     f.{'ipvX_src_addr' if direction == DIRECTION_INGRESS else 'ipvX_dst_addr'},
                     sum(f.in_bytes) "traffic"
                 FROM
-                    {DB_PREFIX}flows "f"
+                    {DB_PREFIX}flows2 "f"
                 WHERE
                     f.client_ip = %s AND
                     f.ts > %s AND
@@ -404,7 +404,7 @@ class NetFlowBot(Collector):
                 SELECT
                     distinct(f.{'input_snmp' if direction == DIRECTION_INGRESS else 'output_snmp'}) "interface_index"
                 FROM
-                    {DB_PREFIX}flows "f"
+                    {DB_PREFIX}flows2 "f"
                 WHERE
                     f.client_ip = %s AND
                     f.ts > %s AND
@@ -418,7 +418,7 @@ class NetFlowBot(Collector):
                         f.protocol,
                         sum(f.in_bytes) "traffic"
                     FROM
-                        {DB_PREFIX}flows "f"
+                        {DB_PREFIX}flows2 "f"
                     WHERE
                         f.client_ip = %s AND
                         f.ts > %s AND
@@ -453,7 +453,7 @@ class NetFlowBot(Collector):
                     f.protocol,
                     sum(f.in_bytes) "traffic"
                 FROM
-                    {DB_PREFIX}flows "f"
+                    {DB_PREFIX}flows2 "f"
                 WHERE
                     f.client_ip = %s AND
                     f.ts > %s AND
@@ -487,7 +487,7 @@ class NetFlowBot(Collector):
                     f.ipvX_src_addr, f.ipvX_dst_addr,
                     sum(f.in_bytes) "traffic"
                 FROM
-                    {DB_PREFIX}flows "f"
+                    {DB_PREFIX}flows2 "f"
                 WHERE
                     f.client_ip = %s AND
                     f.ts > %s AND
@@ -520,7 +520,7 @@ class NetFlowBot(Collector):
     #                 f.PROTOCOL,
     #                 sum(f.IN_BYTES) "traffic"
     #             FROM
-    #                 {DB_PREFIX}flows "f"
+    #                 {DB_PREFIX}flows2 "f"
     #             WHERE
     #                 f.ts >= %s AND
     #                 f.ts < %s AND
