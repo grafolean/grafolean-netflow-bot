@@ -14,7 +14,7 @@ import dotenv
 import requests
 
 from grafoleancollector import Collector, send_results_to_grafolean
-from dbutils import get_db_cursor, DB_PREFIX, LEAVE_N_PAST_DAYS
+from dbutils import get_db_cursor, DB_PREFIX, LEAVE_N_PAST_DAYS, DBConnectionError
 from lookup import PROTOCOLS, DIRECTION_INGRESS, DIRECTION_EGRESS
 
 logging.basicConfig(format='%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
@@ -78,57 +78,62 @@ def _save_current_max_ts(job_id, max_ts):
 
 def job_maint_remove_old_data(*args, **kwargs):
     log.info("MAINT: Maintenance started - removing old data")
-    with get_db_cursor() as c:
-        c.execute(f"SELECT drop_chunks(INTERVAL '{LEAVE_N_PAST_DAYS} days', '{DB_PREFIX}flows2');")
-    log.info("MAINT: Maintenance finished (removing old data).")
+    try:
+        with get_db_cursor() as c:
+            c.execute(f"SELECT drop_chunks(INTERVAL '{LEAVE_N_PAST_DAYS} days', '{DB_PREFIX}flows2');")
+        log.info("MAINT: Maintenance finished (removing old data).")
+    except DBConnectionError:
+        log.error("MAINT: Maintenance job (removing old data) failed due to DB connection issues.")
 
 
 def job_maint_suggest_entities(*args, **job_params):
     log.info("MAINT: Maintenance started - making suggestions for device entities")
+    try:
+        backend_url = job_params['backend_url']
+        bot_token = job_params['bot_token']
+        requests_session = requests.Session()
 
-    backend_url = job_params['backend_url']
-    bot_token = job_params['bot_token']
-    requests_session = requests.Session()
-
-    # for each account, add any new netflow exporters (entities) that might not exist yet:
-    # find all the accounts we have access to:
-    r = requests_session.get(f'{backend_url}/accounts/?b={bot_token}')
-    if r.status_code != 200:
-        raise Exception("Invalid bot token or network error, got status {} while retrieving {}/accounts".format(r.status_code, backend_url))
-    j = r.json()
-    accounts_ids = [a["id"] for a in j["list"]]
-
-    # find all entities for each of the accounts:
-    for account_id in accounts_ids:
-        r = requests_session.get('{}/accounts/{}/entities/?b={}'.format(backend_url, account_id, bot_token))
+        # for each account, add any new netflow exporters (entities) that might not exist yet:
+        # find all the accounts we have access to:
+        r = requests_session.get(f'{backend_url}/accounts/?b={bot_token}')
         if r.status_code != 200:
-            raise Exception("Network error, got status {} while retrieving {}/accounts/{}/entities".format(r.status_code, backend_url, account_id))
+            raise Exception("Invalid bot token or network error, got status {} while retrieving {}/accounts".format(r.status_code, backend_url))
         j = r.json()
-        entities_ips = [e["details"]["ipv4"] for e in j["list"] if e["entity_type"] == "device"]
+        accounts_ids = [a["id"] for a in j["list"]]
 
-        with get_db_cursor() as c:
-            # Ideally, we would just run "select distinct(client_ip) from netflow_flows;", but unfortunately
-            # I was unable to find a performant way to run this query. So we are using netflow_exporters:
-            c.execute(f"SELECT ip FROM {DB_PREFIX}exporters;")
-            for client_ip, in c.fetchall():
-                if client_ip in entities_ips:
-                    log.info(f"MAINT: We already know exporter [{client_ip}]")
-                    continue
+        # find all entities for each of the accounts:
+        for account_id in accounts_ids:
+            r = requests_session.get('{}/accounts/{}/entities/?b={}'.format(backend_url, account_id, bot_token))
+            if r.status_code != 200:
+                raise Exception("Network error, got status {} while retrieving {}/accounts/{}/entities".format(r.status_code, backend_url, account_id))
+            j = r.json()
+            entities_ips = [e["details"]["ipv4"] for e in j["list"] if e["entity_type"] == "device"]
 
-                log.info(f"MAINT: Unknown exporter found, inserting [{client_ip}] to account [{account_id}]")
-                url = f'{backend_url}/accounts/{account_id}/entities/?b={bot_token}'
-                params = {
-                    "name": f'{client_ip} (NetFlow exporter)',
-                    "entity_type": "device",
-                    "details": {
-                        "ipv4": client_ip,
-                    },
-                }
-                r = requests_session.post(url, json=params)
-                if r.status_code > 299:
-                    raise Exception("Network error, got status {} while posting to {}/accounts/{}/entities: {}".format(r.status_code, backend_url, account_id, r.content))
+            with get_db_cursor() as c:
+                # Ideally, we would just run "select distinct(client_ip) from netflow_flows;", but unfortunately
+                # I was unable to find a performant way to run this query. So we are using netflow_exporters:
+                c.execute(f"SELECT ip FROM {DB_PREFIX}exporters;")
+                for client_ip, in c.fetchall():
+                    if client_ip in entities_ips:
+                        log.info(f"MAINT: We already know exporter [{client_ip}]")
+                        continue
 
-    log.info("MAINT: Maintenance finished (device entities suggestions).")
+                    log.info(f"MAINT: Unknown exporter found, inserting [{client_ip}] to account [{account_id}]")
+                    url = f'{backend_url}/accounts/{account_id}/entities/?b={bot_token}'
+                    params = {
+                        "name": f'{client_ip} (NetFlow exporter)',
+                        "entity_type": "device",
+                        "details": {
+                            "ipv4": client_ip,
+                        },
+                    }
+                    r = requests_session.post(url, json=params)
+                    if r.status_code > 299:
+                        raise Exception("Network error, got status {} while posting to {}/accounts/{}/entities: {}".format(r.status_code, backend_url, account_id, r.content))
+
+        log.info("MAINT: Maintenance finished (device entities suggestions).")
+    except DBConnectionError:
+        log.error("MAINT: Maintenance job (device entities suggestions) failed due to DB connection issues.")
 
 
 class NetFlowBot(Collector):
@@ -163,11 +168,11 @@ class NetFlowBot(Collector):
                     "bot_token": self.bot_token,
                 }
                 start_ts = int(time.time()) + first_run_ts - interval  # start_ts must be in the past
-                yield job_id, [interval], NetFlowBot.perform_account_aggr_job, job_params, start_ts
+                yield job_id, [interval], NetFlowBot.job_perform_account_aggr, job_params, start_ts
 
 
     @staticmethod
-    def perform_account_aggr_job(*args, **job_params):
+    def job_perform_account_aggr(*args, **job_params):
         # \d netflow_flows2
         #      Column     |     Type      | Description
         #  ---------------+---------------+------------
@@ -189,68 +194,72 @@ class NetFlowBot(Collector):
         entities = [(entity_info["entity_id"], entity_info["details"]["ipv4"],) for entity_info in job_params["entities_infos"]]
         log.info(f"Starting {interval_label} aggregation job for account {account_id}...")
 
-        last_used_ts = _get_last_used_ts(job_id)
-        max_ts = _get_current_max_ts()
-        if max_ts is None or last_used_ts == max_ts:
-            log.info(f"No netflow data found for job {job_id}, skipping.")
-            return
-        _save_current_max_ts(job_id, max_ts)
-        if last_used_ts is None:
-            log.info(f"Counter was not yet initialized for job {job_id}, skipping.")
-            return
+        try:
+            last_used_ts = _get_last_used_ts(job_id)
+            max_ts = _get_current_max_ts()
+            if max_ts is None or last_used_ts == max_ts:
+                log.info(f"No netflow data found for job {job_id}, skipping.")
+                return
+            _save_current_max_ts(job_id, max_ts)
+            if last_used_ts is None:
+                log.info(f"Counter was not yet initialized for job {job_id}, skipping.")
+                return
 
-        # WATCH OUT! This hack changes all of the units from Bps to B! (should be cleaned up)
-        #time_between = float(max_ts - last_used_ts)
-        time_between = 1  # we want to use bytes as unit, not bytes per second
+            # WATCH OUT! This hack changes all of the units from Bps to B! (should be cleaned up)
+            #time_between = float(max_ts - last_used_ts)
+            time_between = 1  # we want to use bytes as unit, not bytes per second
 
-        # traffic:
-        values = []
-        sum_traffic_egress = 0
-        sum_traffic_ingress = 0
-        for entity_id, entity_ip in entities:
-            v, s = NetFlowBot.get_traffic_for_entity(interval_label, last_used_ts, max_ts, time_between, DIRECTION_EGRESS, entity_id, entity_ip)
-            values.extend(v)
-            sum_traffic_egress += s
-            v, s = NetFlowBot.get_traffic_for_entity(interval_label, last_used_ts, max_ts, time_between, DIRECTION_INGRESS, entity_id, entity_ip)
-            values.extend(v)
-            sum_traffic_ingress += s
+            # traffic:
+            values = []
+            sum_traffic_egress = 0
+            sum_traffic_ingress = 0
+            for entity_id, entity_ip in entities:
+                v, s = NetFlowBot.get_traffic_for_entity(interval_label, last_used_ts, max_ts, time_between, DIRECTION_EGRESS, entity_id, entity_ip)
+                values.extend(v)
+                sum_traffic_egress += s
+                v, s = NetFlowBot.get_traffic_for_entity(interval_label, last_used_ts, max_ts, time_between, DIRECTION_INGRESS, entity_id, entity_ip)
+                values.extend(v)
+                sum_traffic_ingress += s
 
-        # cumulative sum for the whole account:
-        output_path = NetFlowBot.construct_output_path_prefix(interval_label, DIRECTION_EGRESS, entity_id=None, interface=None)
-        values.append({
-            'p': output_path,
-            'v': sum_traffic_egress / time_between,
-        })
-        output_path = NetFlowBot.construct_output_path_prefix(interval_label, DIRECTION_INGRESS, entity_id=None, interface=None)
-        values.append({
-            'p': output_path,
-            'v': sum_traffic_ingress / time_between,
-        })
+            # cumulative sum for the whole account:
+            output_path = NetFlowBot.construct_output_path_prefix(interval_label, DIRECTION_EGRESS, entity_id=None, interface=None)
+            values.append({
+                'p': output_path,
+                'v': sum_traffic_egress / time_between,
+            })
+            output_path = NetFlowBot.construct_output_path_prefix(interval_label, DIRECTION_INGRESS, entity_id=None, interface=None)
+            values.append({
+                'p': output_path,
+                'v': sum_traffic_ingress / time_between,
+            })
 
-        # top N IPs:
-        for entity_id, entity_ip in entities:
-            for direction in [DIRECTION_EGRESS, DIRECTION_INGRESS]:
-                values.extend(NetFlowBot.get_top_N_IPs_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
-                values.extend(NetFlowBot.get_top_N_IPs_for_entity_interfaces(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
-                values.extend(NetFlowBot.get_top_N_protocols_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
-                values.extend(NetFlowBot.get_top_N_protocols_for_entity_interfaces(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
-                values.extend(NetFlowBot.get_top_N_connections_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
+            # top N IPs:
+            for entity_id, entity_ip in entities:
+                for direction in [DIRECTION_EGRESS, DIRECTION_INGRESS]:
+                    values.extend(NetFlowBot.get_top_N_IPs_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
+                    values.extend(NetFlowBot.get_top_N_IPs_for_entity_interfaces(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
+                    values.extend(NetFlowBot.get_top_N_protocols_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
+                    values.extend(NetFlowBot.get_top_N_protocols_for_entity_interfaces(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
+                    values.extend(NetFlowBot.get_top_N_connections_for_entity(interval_label, last_used_ts, max_ts, time_between, direction, entity_id, entity_ip))
 
-        if not values:
-            log.warning("No values found to be sent to Grafolean")
-            return
+            if not values:
+                log.warning("No values found to be sent to Grafolean")
+                return
 
-        # the values are Decimals because they come from BIGINT column, so we must transform
-        # them to strings before encoding to JSON:
-        values = [{'p': v['p'], 'v': str(v['v'])} for v in values]
+            # the values are Decimals because they come from BIGINT column, so we must transform
+            # them to strings before encoding to JSON:
+            values = [{'p': v['p'], 'v': str(v['v'])} for v in values]
 
-        # send the data to Grafolean:
-        send_results_to_grafolean(
-            job_params['backend_url'],
-            job_params['bot_token'],
-            account_id,
-            values,
-        )
+            # send the data to Grafolean:
+            send_results_to_grafolean(
+                job_params['backend_url'],
+                job_params['bot_token'],
+                account_id,
+                values,
+            )
+
+        except DBConnectionError:
+            log.error(f"{interval_label} aggregation job for account {account_id} failed due to DB connection issues.")
 
 
     @staticmethod

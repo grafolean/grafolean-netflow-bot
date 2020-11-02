@@ -18,7 +18,7 @@ import psycopg2.extras
 from colors import color
 
 from lookup import PROTOCOLS
-from dbutils import migrate_if_needed, get_db_cursor, DB_PREFIX
+from dbutils import initial_wait_for_db, migrate_if_needed, get_db_cursor, DB_PREFIX, DBConnectionError
 from lookup import DIRECTION_INGRESS
 
 
@@ -88,10 +88,14 @@ def _pgwriter_write(pgwriter, ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_D
 
 
 def _pgwriter_finish(pgwriter):
-    with get_db_cursor() as c:
-        pgwriter.write(struct.pack('!h', -1))
-        pgwriter.seek(0)
-        c.copy_expert(f"COPY {DB_PREFIX}flows2 FROM STDIN WITH BINARY", pgwriter)
+    try:
+        with get_db_cursor() as c:
+            pgwriter.write(struct.pack('!h', -1))
+            pgwriter.seek(0)
+            c.copy_expert(f"COPY {DB_PREFIX}flows2 FROM STDIN WITH BINARY", pgwriter)
+    except DBConnectionError:
+        log.error("Error writing to DB, records lost!")
+        return
 
 
 def process_named_pipe(named_pipe_filename):
@@ -265,6 +269,7 @@ if __name__ == "__main__":
     if not NAMED_PIPE_FILENAME:
         raise Exception("Please specify NAMED_PIPE_FILENAME environment var")
 
+    initial_wait_for_db()
     migrate_if_needed()
 
     try:

@@ -5,6 +5,7 @@ import os
 import sys
 import copy
 import json
+import time
 
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
@@ -20,6 +21,10 @@ logging.addLevelName(logging.ERROR, color('ERR', bg='red'))
 log = logging.getLogger("{}.{}".format(__name__, "dbutils"))
 
 
+class DBConnectionError(Exception):
+    pass
+
+
 db_pool = None
 DB_PREFIX = 'netflow_'
 LEAVE_N_PAST_DAYS = 5  # 5 days
@@ -31,26 +36,48 @@ def get_db_connection():
     global db_pool
     if db_pool is None:
         db_connect()
-
     try:
+        if db_pool is None:
+            # connecting to DB failed
+            raise DBConnectionError()
         conn = db_pool.getconn()
+        if conn is None:
+            # pool wasn't able to return a valid connection
+            raise DBConnectionError()
+
         conn.autocommit = True
         conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
         yield conn
+    except (DBConnectionError, psycopg2.OperationalError):
+        db_pool = None  # make sure that we reconnect next time
+        yield None
     finally:
-        db_pool.putconn(conn)
+        if db_pool is not None:
+            db_pool.putconn(conn)
 
 
 @contextmanager
-def get_db_cursor(commit=False):
+def get_db_cursor():
     with get_db_connection() as connection:
+        if connection is None:
+            yield InvalidDBCursor()
+            return
+
         cursor = connection.cursor()
         try:
             yield cursor
-            if commit:
-                connection.commit()
         finally:
-            cursor.close()
+            if not isinstance(cursor, InvalidDBCursor):
+                cursor.close()
+
+
+# In python it is not possible to throw an exception within the __enter__ phase of a with statement:
+#   https://www.python.org/dev/peps/pep-0377/
+# If we want to handle DB connection failures gracefully we return a cursor which will throw
+# DBConnectionError exception whenever it is accessed.
+class InvalidDBCursor(object):
+    def __getattr__(self, attr):
+        raise DBConnectionError()
 
 
 def db_connect():
@@ -73,7 +100,28 @@ def db_connect():
                               connect_timeout=connect_timeout)
     except:
         db_pool = None
-        log.error("DB connection failed")
+        log.warning("DB connection failed")
+
+
+def db_disconnect():
+    global db_pool
+    if not db_pool:
+        return
+    db_pool.closeall()
+    db_pool = None
+    log.info("DB connection is closed")
+
+
+def initial_wait_for_db():
+    while True:
+        with get_db_cursor() as c:
+            try:
+                c.execute('SELECT 1;')
+                res = c.fetchone()
+                return
+            except DBConnectionError:
+                log.info("DB connection failed - waiting for DB to become available, sleeping 5s")
+                time.sleep(5)
 
 
 ###########################
