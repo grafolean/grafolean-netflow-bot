@@ -32,7 +32,7 @@ LABEL org.label-schema.vendor="Grafolean" \
 COPY --from=python-requirements /requirements.txt /requirements.txt
 RUN \
     apt-get update && \
-    apt-get install --no-install-recommends -q -y git build-essential libpq-dev python3-dev libffi-dev && \
+    apt-get install --no-install-recommends -q -y git libpq5 build-essential libpq-dev python3-dev libffi-dev && \
     pip install --no-cache-dir -r /requirements.txt && \
     apt-get purge -y git build-essential libpq-dev python3-dev libffi-dev && \
     apt-get clean autoclean && \
