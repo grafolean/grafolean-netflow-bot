@@ -31,7 +31,13 @@ LABEL org.label-schema.vendor="Grafolean" \
       org.label-schema.docker.schema-version="1.0"
 COPY --from=python-requirements /requirements.txt /requirements.txt
 RUN \
+    apt-get update && \
+    apt-get install --no-install-recommends -q -y git build-essential libpq-dev python3-dev libffi-dev && \
     pip install --no-cache-dir -r /requirements.txt && \
+    apt-get purge -y git build-essential libpq-dev python3-dev libffi-dev && \
+    apt-get clean autoclean && \
+    apt-get autoremove --yes && \
+    rm -rf /var/lib/{apt,dpkg,cache,log}/ /var/cache/apt/* /tmp/* && \
     echo "alias l='ls -altr'" >> /root/.bashrc
 COPY --from=build-backend /netflowbot/ /netflowbot/
 WORKDIR /netflowbot
