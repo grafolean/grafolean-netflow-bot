@@ -214,8 +214,8 @@ def write_buffer(buffer):
                             f.data["IN_BYTES"],
                             f.data["PROTOCOL"],
                             f.data.get("DIRECTION", DIRECTION_INGRESS),
-                            f.data["L4_DST_PORT"],
-                            f.data["L4_SRC_PORT"],
+                            f.data.get("L4_DST_PORT", 0),  # sometimes ports are not available: https://github.com/grafolean/grafolean/issues/13
+                            f.data.get("L4_SRC_PORT", 0),
                             f.data["INPUT_SNMP"],
                             f.data["OUTPUT_SNMP"],
                             address_family,
