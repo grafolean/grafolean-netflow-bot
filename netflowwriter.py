@@ -25,7 +25,9 @@ from lookup import DIRECTION_INGRESS
 # python-netflow-v9-softflowd expects main.py to be the main entrypoint, but we only need
 # parse_packet():
 sys.path.append(os.path.dirname(os.path.realpath(__file__)) + '/pynetflow')
-from pynetflow.netflow import parse_packet, UnknownNetFlowVersion, TemplateNotRecognized
+from pynetflow.netflow import parse_packet
+from pynetflow.netflow.utils import UnknownExportVersion
+from pynetflow.netflow.v9 import V9TemplateNotRecognized
 
 
 IS_DEBUG = os.environ.get('DEBUG', 'false') in ['true', 'yes', '1']
@@ -105,7 +107,7 @@ def process_named_pipe(named_pipe_filename):
         if ex.errno != errno.EEXIST:
             raise
 
-    templates = {}
+    templates = {"netflow": {}, "ipfix": {}}
     last_record_seqs = {}
     buffer = []  # we merge together writes to DB
     known_exporters = set()
@@ -147,11 +149,13 @@ def process_named_pipe(named_pipe_filename):
                         if len(buffer) > MAX_BUFFER_SIZE:
                             write_buffer(buffer)
                             buffer = []
-                    except UnknownNetFlowVersion:
+                    except UnknownExportVersion:
                         log.warning("Unknown NetFlow version")
                         continue
-                    except TemplateNotRecognized as ex:
-                        log.warning(f"Failed to decode a v9 ExportPacket, template not recognized (if this happens at the start, it's ok). Template id: {ex.template_id}")
+                    except V9TemplateNotRecognized as ex:
+                        log.warning(f"Failed to decode a v9 ExportPacket, template not recognized (if this happens at the start, it's ok)")
+                        log.debug(f"Problematic packet data: {data_b64}")
+                        log.debug(f"Known templates until now: {templates}")
                         continue
 
                 except Exception as ex:

@@ -55,6 +55,8 @@ services:
       - POSTGRES_DB=${DB_NAME:-grafolean}
       - POSTGRES_USER=${DB_USER:-admin}
       - POSTGRES_PASSWORD=${DB_PASS:-admin}
+    ports:
+      - "5432:5432"
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h db -U ${DB_USER:-admin} -t 1 -q"]
@@ -127,6 +129,7 @@ services:
     #  - SYS_PTRACE
     networks:
       - grafolean
+    # network_mode: host
 
 
 #  autoheal:
