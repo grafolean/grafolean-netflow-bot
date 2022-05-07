@@ -27,7 +27,7 @@ from lookup import DIRECTION_INGRESS
 sys.path.append(os.path.dirname(os.path.realpath(__file__)) + '/pynetflow')
 from pynetflow.netflow import parse_packet
 from pynetflow.netflow.utils import UnknownExportVersion
-from pynetflow.netflow.v9 import V9TemplateNotRecognized, V9OptionsTemplatesNotSupported
+from pynetflow.netflow.v9 import V9TemplateNotRecognized
 
 
 IS_DEBUG = os.environ.get('DEBUG', 'false') in ['true', 'yes', '1']
@@ -154,11 +154,6 @@ def process_named_pipe(named_pipe_filename):
                         continue
                     except V9TemplateNotRecognized as ex:
                         log.warning(f"Failed to decode a v9 ExportPacket, template not recognized (if this happens at the start, it's ok)")
-                        if client_ip in last_record_seqs:
-                            last_record_seqs[client_ip] += 1
-                        continue
-                    except V9OptionsTemplatesNotSupported as ex:
-                        log.debug(f"Skipping Options Data Record (Options Template parsing not supported)")
                         if client_ip in last_record_seqs:
                             last_record_seqs[client_ip] += 1
                         continue
