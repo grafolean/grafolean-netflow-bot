@@ -217,8 +217,6 @@ def migration_step_6():
     """ Create a new table for flows using TimescaleDB.
         - we use a different name to avoid converting old data; the conversion is too slow to be done on existing
           installations without manual work. For those we know about we can perform this operation manually.
-        - table is *not* unlogged (it is using WAL). If insert performance becomes an issue, we can change this later
-          using: "ALTER TABLE netflow_flows2 SET UNLOGGED;" (but at the moment we don't know that yet)
     """
     with get_db_cursor() as c:
         c.execute(f"""
@@ -238,3 +236,28 @@ def migration_step_6():
         """)
         c.execute(f"SELECT create_hypertable('{DB_PREFIX}flows2', 'ts', chunk_time_interval => INTERVAL '1 hour');")
         c.execute(f'CREATE TABLE {DB_PREFIX}bot_jobs2 (job_id TEXT NOT NULL PRIMARY KEY, last_used_ts TIMESTAMP NOT NULL);')
+
+def migration_step_7():
+    """ Change input_snmp/output_snmp from SMALLINT to BIGINT (it is 2 bytes by default, but is sometimes more)
+        - since this is temporary data anyway, we drop and recreate the table
+        - table is *not* unlogged (it is using WAL). If insert performance becomes an issue, we can change this later
+          using: "ALTER TABLE netflow_flows2 SET UNLOGGED;" (but at the moment we don't know that yet)
+    """
+    with get_db_cursor() as c:
+        c.execute(f"DROP  TABLE {DB_PREFIX}flows2;")
+        c.execute(f"""
+            CREATE TABLE {DB_PREFIX}flows2 (
+                ts TIMESTAMP NOT NULL,
+                client_ip INET NOT NULL,
+                in_bytes BIGINT NOT NULL,
+                protocol SMALLINT NOT NULL,
+                direction SMALLINT NOT NULL,
+                l4_dst_port INTEGER NOT NULL,
+                l4_src_port INTEGER NOT NULL,
+                input_snmp BIGINT NOT NULL,
+                output_snmp BIGINT NOT NULL,
+                ipvX_dst_addr INET NOT NULL,
+                ipvX_src_addr INET NOT NULL
+            );
+        """)
+        c.execute(f"SELECT create_hypertable('{DB_PREFIX}flows2', 'ts', chunk_time_interval => INTERVAL '1 hour');")

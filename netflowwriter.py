@@ -63,8 +63,8 @@ def _pgwriter_init():
     return pg_writer
 
 
-def _pgwriter_write(pgwriter, ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, address_family, IPVx_DST_ADDR, IPVx_SRC_ADDR):
-    buf = struct.pack('!Hiqi4s4siQiHiHiIiIiHiH',
+def _pgwriter_encode(ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_DST_PORT, L4_SRC_PORT, INPUT_SNMP, OUTPUT_SNMP, address_family, IPVx_DST_ADDR, IPVx_SRC_ADDR):
+    buf = struct.pack('!Hiqi4s4siQiHiHiIiIiQiQ',
         11,  # number of columns
         8, int(1000000 * (ts - PG_EPOCH_TIMESTAMP)), # https://doxygen.postgresql.org/backend_2utils_2adt_2timestamp_8c_source.html#l00228
         8, IPV4_ADDRESS_PREFIX, socket.inet_aton(client_ip),   # 4 bytes prefix + 4 bytes IP
@@ -73,8 +73,8 @@ def _pgwriter_write(pgwriter, ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_D
         2, DIRECTION,
         4, L4_DST_PORT,
         4, L4_SRC_PORT,
-        2, INPUT_SNMP,
-        2, OUTPUT_SNMP,
+        8, INPUT_SNMP,
+        8, OUTPUT_SNMP,
     )
     if address_family != socket.AF_INET6:
         buf2 = struct.pack('!i4s4si4s4s',
@@ -86,7 +86,7 @@ def _pgwriter_write(pgwriter, ts, client_ip, IN_BYTES, PROTOCOL, DIRECTION, L4_D
             4 + 16, IPV6_ADDRESS_PREFIX, IPVx_DST_ADDR,
             4 + 16, IPV6_ADDRESS_PREFIX, IPVx_SRC_ADDR,
         )
-    pgwriter.write(buf + buf2)
+    return buf + buf2
 
 
 def _pgwriter_finish(pgwriter):
@@ -212,7 +212,7 @@ def write_buffer(buffer):
                             dst = socket.inet_aton(f.data["IPV4_DST_ADDR"])
                             src = socket.inet_aton(f.data["IPV4_SRC_ADDR"])
 
-                        yield (
+                        yield _pgwriter_encode(
                             ts,
                             client_ip,
                             f.data["IN_BYTES"],
@@ -226,12 +226,12 @@ def write_buffer(buffer):
                             dst,
                             src,
                         )
-                    except KeyError:
+                    except:
                         log.exception(f"[{client_ip}] Error decoding v9 flow. Contents: {repr(f.data)}")
             elif netflow_version == 5:
                 for f in flows:
                     try:
-                        yield (
+                        yield _pgwriter_encode(
                             ts,
                             client_ip,
                             # "IN_BYTES":
@@ -257,14 +257,14 @@ def write_buffer(buffer):
                             # "IPV4_SRC_ADDR":
                             struct.pack('!I', f.data["IPV4_SRC_ADDR"]),
                         )
-                    except KeyError:
+                    except:
                         log.exception(f"[{client_ip}] Error decoding v5 flow. Contents: {repr(f.data)}")
             else:
                 log.error(f"[{client_ip}] Only Netflow v5 and v9 currently supported, ignoring record (version: [{export.header.version}])")
 
     pgwriter = _pgwriter_init()
-    for data in _get_data(buffer):
-        _pgwriter_write(pgwriter, *data)
+    for encoded_data in _get_data(buffer):
+        pgwriter.write(encoded_data)
     _pgwriter_finish(pgwriter)
 
 
