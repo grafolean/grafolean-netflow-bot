@@ -545,7 +545,7 @@ class NetFlowBot(Collector):
 
             output_path_entity = NetFlowBot.construct_output_path_prefix(interval_label, direction, entity_id, interface=None)
             for l4_dst_port, traffic_bytes in c.fetchall():
-                output_path = f"{output_path_entity}.topdstports.{path_part_encode(l4_dst_port)}"
+                output_path = f"{output_path_entity}.topdstports.{path_part_encode(str(l4_dst_port))}"
                 values.append({
                     'p': output_path,
                     'v': traffic_bytes / time_between,  # Bps
